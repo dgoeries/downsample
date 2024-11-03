@@ -11,14 +11,6 @@ The code has been translated and refers to the work of:
 
 The algorithms are described in the work of Sveinn Steinarsson (https://github.com/sveinn-steinarsson/flot-downsample/).
 
-## Demo and 'Known Issues'
-
-The examples show the efficiency of the downsampling algorithm with a data set of ``7500``
-data points down sampled to ``500`` points.
-
-![SampleView](images/data.png)
-![Close View](images/closedata.png)
-
 Known features and requirements:
 
 - The algorithm requires that x data is increasing and finite.
