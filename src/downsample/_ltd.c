@@ -6,19 +6,13 @@
 
 #define __DOUBLE_SIZE__ sizeof(double)
 
-
-static double calculate_triangle_area(PyArrayObject *p1, PyArrayObject *p2,
-                                      PyArrayObject *p3) {
-    double *p1_data = (double *)PyArray_DATA(p1);
-    double *p2_data = (double *)PyArray_DATA(p2);
-    double *p3_data = (double *)PyArray_DATA(p3);
-
-    double x1 = p1_data[0], y1 = p1_data[1];
-    double x2 = p2_data[0], y2 = p2_data[1];
-    double x3 = p3_data[0], y3 = p3_data[1];
-    return fabs((x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)) / 2.0);
+double calculate_triangle_area(const double *point1, const double *point2,
+                               const double *point3) {
+    return fabs((point1[0] * (point2[1] - point3[1]) +
+                 point2[0] * (point3[1] - point1[1]) +
+                 point3[0] * (point1[1] - point2[1])) /
+                2.0);
 }
-
 
 static PyObject *calculate_average_point(PyArrayObject *bucket) {
     npy_intp num_points = PyArray_DIM(bucket, 0);
@@ -152,8 +146,7 @@ static PyObject *LTTB_for_buckets(PyObject *buckets_list) {
     x_data[0] = first_point_data[0];
     y_data[0] = first_point_data[1];
     // Store the last selected data point
-    double last_selected_x = first_point_data[0];
-    double last_selected_y = first_point_data[1];
+    double *last_selected_data = first_point_data;
 
     // Main LTTB loop
     npy_intp current_index = 1;
@@ -173,11 +166,8 @@ static PyObject *LTTB_for_buckets(PyObject *buckets_list) {
         npy_intp bucket_size = PyArray_DIM(bucket, 0);
         for (npy_intp j = 0; j < bucket_size; j++) {
             double *point_data = (double *)PyArray_GETPTR2(bucket, j, 0);
-            double area = fabs(
-                (last_selected_x * (point_data[1] - average_point_data[1]) +
-                 point_data[0] * (average_point_data[1] - last_selected_y) +
-                 average_point_data[0] * (last_selected_y - point_data[1])) /
-                2.0);
+            double area = calculate_triangle_area(
+                last_selected_data, point_data, average_point_data);
             if (area > max_area) {
                 max_area = area;
                 max_area_index = j;
@@ -187,8 +177,7 @@ static PyObject *LTTB_for_buckets(PyObject *buckets_list) {
             (double *)PyArray_GETPTR2(bucket, max_area_index, 0);
         x_data[current_index] = selected_point_data[0];
         y_data[current_index] = selected_point_data[1];
-        last_selected_x = selected_point_data[0];
-        last_selected_y = selected_point_data[1];
+        last_selected_data = selected_point_data;
         current_index++;
         Py_DECREF(average_point);
     }
