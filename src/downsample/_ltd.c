@@ -5,14 +5,7 @@
 #include <numpy/arrayobject.h>
 
 #define __DOUBLE_SIZE__ sizeof(double)
-
-double calculate_triangle_area(const double *point1, const double *point2,
-                               const double *point3) {
-    return fabs((point1[0] * (point2[1] - point3[1]) +
-                 point2[0] * (point3[1] - point1[1]) +
-                 point3[0] * (point1[1] - point2[1])) /
-                2.0);
-}
+#include "utils.h"
 
 static PyObject *calculate_average_point(PyArrayObject *bucket) {
     npy_intp num_points = PyArray_DIM(bucket, 0);
@@ -149,7 +142,6 @@ static PyObject *LTTB_for_buckets(PyObject *buckets_list) {
     double *last_selected_data = first_point_data;
 
     // Main LTTB loop
-    npy_intp current_index = 1;
     for (Py_ssize_t i = 1; i < bucket_count - 1; i++) {
         PyArrayObject *bucket =
             (PyArrayObject *)PyList_GetItem(buckets_list, i);
@@ -175,10 +167,9 @@ static PyObject *LTTB_for_buckets(PyObject *buckets_list) {
         }
         double *selected_point_data =
             (double *)PyArray_GETPTR2(bucket, max_area_index, 0);
-        x_data[current_index] = selected_point_data[0];
-        y_data[current_index] = selected_point_data[1];
+        x_data[i] = selected_point_data[0];
+        y_data[i] = selected_point_data[1];
         last_selected_data = selected_point_data;
-        current_index++;
         Py_DECREF(average_point);
     }
 
@@ -186,8 +177,8 @@ static PyObject *LTTB_for_buckets(PyObject *buckets_list) {
     PyArrayObject *last_bucket =
         (PyArrayObject *)PyList_GetItem(buckets_list, bucket_count - 1);
     double *last_point_data = (double *)PyArray_GETPTR2(last_bucket, 0, 0);
-    x_data[current_index] = last_point_data[0];
-    y_data[current_index] = last_point_data[1];
+    x_data[bucket_count - 1] = last_point_data[0];
+    y_data[bucket_count - 1] = last_point_data[1];
     // Return x and y arrays as a tuple
     PyObject *result = PyTuple_Pack(2, x_array, y_array);
     Py_DECREF(x_array);

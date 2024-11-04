@@ -5,7 +5,7 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 
-from downsample import ltd
+from downsample import ltd, ltob
 
 colors = ["blue", "red", "green", "purple", "orange",
           "brown", "pink", "gray", "olive", "cyan"]
@@ -36,7 +36,7 @@ def main():
     data = np.genfromtxt(path, delimiter=",", skip_header=0)
     threshold = 500
     start_time = time.perf_counter()
-    downsampled_data = ltd(data[:, 0], data[:, 1], threshold)
+    ltd_sampled = ltd(data[:, 0], data[:, 1], threshold)
     end_time = time.perf_counter()
     execution_time = end_time - start_time
     print(f"Before execution: Start time = {start_time}")
@@ -45,12 +45,24 @@ def main():
     csv_filename = "sampled_data.csv"
     with open(csv_filename, mode="w", newline="") as file:
         writer = csv.writer(file)
-        for index, value in zip(downsampled_data[0], downsampled_data[1]):
+        for index, value in zip(ltd_sampled[0], ltd_sampled[1]):
             writer.writerow([index, value])
-    merged_array = np.column_stack((downsampled_data[0], downsampled_data[1]))
+    merged_ltd_array = np.column_stack((ltd_sampled[0], ltd_sampled[1]))
+
+    start_time = time.perf_counter()
+    ltob_sampled = ltob(data[:, 0], data[:, 1], threshold)
+    end_time = time.perf_counter()
+    execution_time = end_time - start_time
+    print(f"Before execution: Start time = {start_time}")
+    print(f"After execution: End time = {end_time}")
+    print(f"Execution time: {execution_time:.10f} seconds")
+    merged_ltob_array = np.column_stack((ltob_sampled[0], ltob_sampled[1]))
+
     plot_data(
         {"Original": data,
-         "Sampled": merged_array}
+         "Sampled LTD": merged_ltd_array,
+         "Sampled LTOB": merged_ltob_array,
+         }
     )
 
 
