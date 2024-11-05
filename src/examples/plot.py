@@ -5,7 +5,7 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 
-from downsample import ltd, ltob
+from downsample import ltd, ltob, lttb
 
 colors = ["blue", "red", "green", "purple", "orange",
           "brown", "pink", "gray", "olive", "cyan"]
@@ -58,10 +58,20 @@ def main():
     print(f"Execution time: {execution_time:.10f} seconds")
     merged_ltob_array = np.column_stack((ltob_sampled[0], ltob_sampled[1]))
 
+    start_time = time.perf_counter()
+    lttb_sampled = lttb(data[:, 0], data[:, 1], threshold)
+    end_time = time.perf_counter()
+    execution_time = end_time - start_time
+    print(f"Before execution: Start time = {start_time}")
+    print(f"After execution: End time = {end_time}")
+    print(f"Execution time: {execution_time:.10f} seconds")
+    merged_lttb_array = np.column_stack((lttb_sampled[0], lttb_sampled[1]))
+
     plot_data(
         {"Original": data,
          "Sampled LTD": merged_ltd_array,
          "Sampled LTOB": merged_ltob_array,
+         "Sampled LTTB": merged_lttb_array,
          }
     )
 
