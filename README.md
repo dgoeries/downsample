@@ -1,4 +1,4 @@
-# downsample: Collection of downsample algorithms for Python (Python using a C implementation)
+# downsample: Collection of downsample algorithms for Python (Python using a C implementation) [![PyPi](https://img.shields.io/pypi/v/downsample?color=blue)](https://pypi.org/project/downsample/) [![PyPI Downloads](https://img.shields.io/pypi/dm/downsample.svg?label=PyPI%20downloads)](https://pypi.org/project/downsample/)
 
 This packages includes low level implementations written in C-Python of:
 
