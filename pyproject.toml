@@ -39,4 +39,4 @@ classifiers = [
 "git" = "https://github.com/dgoeries/downsample"
 
 [tool.setuptools.dynamic]
-readme = { file = ["README.md"], content-type = "text/markdown" }
+readme = { file = ["README.txt"], content-type = "text/markdown" }

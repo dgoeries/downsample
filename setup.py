@@ -14,6 +14,12 @@ setup(
             ["src/downsample/_ltob.c", "src/downsample/utils.c"],
             define_macros=[
                 ("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")],
+            include_dirs=[numpy.get_include(), 'include']),
+        Extension(
+            "downsample._lttb",
+            ["src/downsample/_lttb.c", "src/downsample/utils.c"],
+            define_macros=[
+                ("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")],
             include_dirs=[numpy.get_include(), 'include'])
     ],
     package_dir={"": "src"},

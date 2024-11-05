@@ -1,10 +1,13 @@
 # downsample: Collection of downsample algorithms for Python (Python using a C implementation)
 
-This packages includes:
+This packages includes low level implementations written in C-Python of:
 
-- A low-level implementation of the `Largest Triangle Dynamic Buckets` (LTD) downsampling algorithm written in C-Python.
+- The `Largest Triangle Dynamic Buckets` (`LTD`) downsampling algorithm
+- The `Largest Triangle Three Buckets` (`LTTB`) downsampling algorithm
+- The `Largest Triangle One Bucket` (`LTOB`) downsampling algorithm
 
-The code has been translated and refers to the work of:
+The algorithm of `LTTB` was initially developed in (https://github.com/dgoeries/lttbc.git)
+Parts of this code have been translated and refers to the work of:
 
 - Ján Jakub Naništa (https://github.com/janjakubnanista/downsample) (Typescript)
 - Hao Chen (https://github.com/haoel/downsampling) (Go)
@@ -35,9 +38,9 @@ to use in other environments with Python 3.10 or later:
 
 ## How to use on the field
 
-The ``ltd`` function takes an input for ``x`` and ``y`` in addition to the ``threshold``:
+All functions take an input for ``x`` and ``y`` in addition to the ``threshold``:
 
-    import downsample
+    from downsample import ltob, lttb, ltd
     import numpy as np
 
     array_size = 10000
@@ -45,23 +48,30 @@ The ``ltd`` function takes an input for ``x`` and ``y`` in addition to the ``thr
 
     x = np.arange(array_size, dtype=np.int32)
     y = np.random.randint(1000, size=array_size, dtype=np.uint64)
-    nx, ny = downsample.ltd(x, y, threshold)
 
-    assert len(nx) == threshold
-    assert len(ny) == threshold
-    assert nx.dtype == np.double
-    assert ny.dtype == np.double
+    x_l = x.tolist()
+    y_l = y.tolist()
 
-    # List data or a mixture is accepted as well!
-    x = np.arange(array_size).tolist()
-    y = np.random.uniform(0, 1000, array_size).tolist()
+    for func in {ltd, ltob, lttb}:
+        nx, ny = func(x, y, threshold)
+        assert len(nx) == threshold
+        assert len(ny) == threshold
+        assert nx.dtype == np.double
+        assert ny.dtype == np.double
 
-    assert isinstance(x, list)
-    assert isinstance(y, list)
+        # List data or a mixture is accepted as well!
+        nx, ny = func(x_l, y_l, threshold)
+        assert len(nx) == threshold
+        assert len(ny) == threshold
+        assert nx.dtype == np.double
+        assert ny.dtype == np.double
 
-    nx, ny = downsample.ltd(x, y, threshold)
+## Performance Overview
 
-    assert len(nx) == threshold
-    assert len(ny) == threshold
-    assert nx.dtype == np.double
-    assert ny.dtype == np.double
+For a performance overview, a sample of 7.500 data points was analyzed with a
+threshold set at 500 points. The performance test was conducted on a single core,
+utilizing a base clock speed of 3.70 GHz and 32 MB of L3 cache.
+
+- LTD: 977.2 us
+- LTOB: 61.0 us
+- LTTB: 63.1 us
