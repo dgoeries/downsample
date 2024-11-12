@@ -1,12 +1,13 @@
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
+#include "utils.h"
 #include <Python.h>
 #include <math.h>
 #include <numpy/arrayobject.h>
 #include <numpy/npy_math.h>
-#include "utils.h"
 
 
-static PyObject *largest_triangle_three_buckets(PyObject *self, PyObject *args) {
+static PyObject *largest_triangle_three_buckets(PyObject *self,
+                                                PyObject *args) {
     PyObject *x_obj, *y_obj;
     PyArrayObject *x_array = NULL, *y_array = NULL;
     int threshold;
@@ -56,14 +57,14 @@ static PyObject *largest_triangle_three_buckets(PyObject *self, PyObject *args) 
     // Create an empty output array with shape and dim for the output!
     npy_intp dims[1];
     dims[0] = threshold;
-    PyArrayObject *result_x = (PyArrayObject *)PyArray_Empty(1, dims,
-        PyArray_DescrFromType(NPY_DOUBLE), 0);
-    PyArrayObject *result_y = (PyArrayObject *)PyArray_Empty(1, dims,
-        PyArray_DescrFromType(NPY_DOUBLE), 0);
+    PyArrayObject *result_x = (PyArrayObject *)PyArray_Empty(
+        1, dims, PyArray_DescrFromType(NPY_DOUBLE), 0);
+    PyArrayObject *result_y = (PyArrayObject *)PyArray_Empty(
+        1, dims, PyArray_DescrFromType(NPY_DOUBLE), 0);
 
     // Get a pointer to its data
-    double *result_x_data = (double*)PyArray_DATA(result_x);
-    double *result_y_data = (double*)PyArray_DATA(result_y);
+    double *result_x_data = (double *)PyArray_DATA(result_x);
+    double *result_y_data = (double *)PyArray_DATA(result_y);
 
     // The main loop here!
     const double every = (double)(len_points - 2) / (threshold - 2);
@@ -82,14 +83,14 @@ static PyObject *largest_triangle_three_buckets(PyObject *self, PyObject *args) 
         // Calculate point average for next bucket (containing c)
         double avg_x = 0;
         double avg_y = 0;
-        npy_intp avg_start = (npy_intp)(floor((i + 1)* every) + 1);
+        npy_intp avg_start = (npy_intp)(floor((i + 1) * every) + 1);
         npy_intp avg_end = (npy_intp)(floor((i + 2) * every) + 1);
-        if (avg_end >= len_points){
+        if (avg_end >= len_points) {
             avg_end = len_points;
         }
         npy_intp avg_length = avg_end - avg_start;
 
-        for (;avg_start < avg_end; avg_start++){
+        for (; avg_start < avg_end; avg_start++) {
             avg_x += x[avg_start];
             avg_y += y[avg_start];
         }
@@ -105,13 +106,14 @@ static PyObject *largest_triangle_three_buckets(PyObject *self, PyObject *args) 
         double point_a_y = y[a];
 
         double max_area = -1.0;
-        for (; k < range_to; k++){
+        for (; k < range_to; k++) {
             // Calculate triangle area over three buckets
             double point_data[2] = {point_a_x, point_a_y};
             double avg_data[2] = {avg_y, avg_y};
             double next_data[2] = {x[k], y[k]};
-            double area = calculate_triangle_area(point_data, avg_data, next_data);
-            if (area > max_area){
+            double area =
+                calculate_triangle_area(point_data, avg_data, next_data);
+            if (area > max_area) {
                 max_area = area;
                 max_area_point_x = x[k];
                 max_area_point_y = y[k];
@@ -149,8 +151,7 @@ fail:
 
 
 static PyMethodDef LTTBMethods[] = {
-    {"largest_triangle_three_buckets",
-     largest_triangle_three_buckets,
+    {"largest_triangle_three_buckets", largest_triangle_three_buckets,
      METH_VARARGS,
      "Compute the largest triangle three buckets (LTTB) algorithm in a C "
      "extension."},

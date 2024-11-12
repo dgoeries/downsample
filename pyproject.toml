@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "downsample"
-version = "0.0.2"
+version = "0.0.4"
 readme = {file = "README.txt", content-type = "text/markdown"}
 description = "Downsample algorithms module for Python written in C"
 requires-python = ">=3.10"

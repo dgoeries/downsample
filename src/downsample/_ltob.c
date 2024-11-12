@@ -7,6 +7,7 @@
 
 #include "utils.h"
 
+
 static PyObject *largest_triangle_one_bucket(PyObject *self, PyObject *args) {
     PyObject *x_obj, *y_obj;
     PyArrayObject *x_array = NULL, *y_array = NULL;
@@ -76,10 +77,10 @@ static PyObject *largest_triangle_one_bucket(PyObject *self, PyObject *args) {
     double bucket_size = (double)(len_points - 2) / (double)(threshold - 2);
 
     // Main loop
-    for (Py_ssize_t i = 1; i < threshold - 1; i++) {
+    for (npy_intp i = 1; i < threshold - 1; i++) {
         npy_intp start_index = (npy_intp)floor((double)i * bucket_size);
         npy_intp end_index =
-            (npy_intp)min(len_points - 1, (double)(i + 1) * bucket_size);
+            (npy_intp)fmin(len_points - 1, (double)(i + 1) * bucket_size);
 
         double max_area = -1.0;
         npy_intp max_area_index = -1;
@@ -121,7 +122,7 @@ static PyMethodDef LTOBMethods[] = {{"largest_triangle_one_bucket",
 
 static struct PyModuleDef LTOBModule = {
     PyModuleDef_HEAD_INIT, "_ltob",
-    "Module for LTD downsampling using the NumPy C API", -1, LTOBMethods};
+    "Module for LTOB downsampling using the NumPy C API", -1, LTOBMethods};
 
 PyMODINIT_FUNC PyInit__ltob(void) {
     import_array();
