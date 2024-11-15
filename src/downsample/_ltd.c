@@ -236,7 +236,6 @@ static double calculate_sse_for_bucket(PyArrayObject *bucket) {
 
 static npy_intp find_highest_sse_bucket_index(PyObject *buckets_list,
                                               PyArrayObject *sse_array) {
-    Py_ssize_t num_buckets = PyList_Size(buckets_list);
     npy_intp sse_len = PyArray_DIM(sse_array, 0);
     if (sse_len < 3) {
         PyErr_SetString(

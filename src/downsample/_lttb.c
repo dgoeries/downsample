@@ -133,7 +133,7 @@ static PyObject *largest_triangle_three_buckets(PyObject *self,
     result_x_data[threshold - 1] = npy_isfinite(last_a_x) ? last_a_x : 0.0;
     result_y_data[threshold - 1] = npy_isfinite(last_a_y) ? last_a_y : 0.0;
 
-    PyObject *value = Py_BuildValue("OO", result_x, result_y);
+    PyObject *result = PyTuple_Pack(2, result_x, result_y);
 
     // And remove the references!
     Py_DECREF(x_array);
@@ -141,7 +141,7 @@ static PyObject *largest_triangle_three_buckets(PyObject *self,
     Py_XDECREF(result_x);
     Py_XDECREF(result_y);
 
-    return value;
+    return result;
 
 fail:
     Py_XDECREF(x_array);
