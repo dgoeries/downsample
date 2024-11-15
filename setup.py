@@ -25,9 +25,6 @@ setup(
             include_dirs=[numpy.get_include(), _HEADERS])
     ],
     package_dir={"": "src"},
-    package_data={
-        "downsample": ["src/downsample/*.pyi",
-                       "src/downsample/py.typed"],
-    },
+    include_package_data=True,
     packages=find_packages("src"),
 )

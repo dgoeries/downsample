@@ -1,0 +1,24 @@
+# Include documentation files
+include README.md
+include LICENSE
+include CHANGELOG.md
+
+# Include source files for C extension
+include src/downsample/*.h
+include src/downsample/*.c
+
+# Include compiled files for C extension
+include src/downsample/*.so
+include src/downsample/*.pyd
+
+# Include package data files
+recursive-include src/downsample/ *.pyi py.typed
+
+# Exclude temporary and build files
+exclude *.tmp
+prune build
+prune dist
+prune *.egg-info
+
+# Include all Python scripts
+global-include *.py
