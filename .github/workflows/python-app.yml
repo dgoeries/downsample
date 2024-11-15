@@ -28,7 +28,7 @@ jobs:
         python -m pip install flake8 pytest
     - name: Build package
       run: |
-        python -m pip install . -v
+        python -m pip install -e . -v
     - name: Test with pytest
       run: |
         pytest
