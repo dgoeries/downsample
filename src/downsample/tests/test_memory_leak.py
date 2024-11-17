@@ -1,10 +1,9 @@
 import tracemalloc
 
 import numpy as np
-
-from downsample import lttb, ltob, ltd
-
 import pytest
+
+from downsample import ltob, lttb
 
 
 @pytest.mark.parametrize("func", [lttb, ltob])
