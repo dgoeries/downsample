@@ -1,5 +1,7 @@
 import tracemalloc
+
 import numpy as np
+
 from downsample import largest_triangle_three_buckets
 
 
