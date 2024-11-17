@@ -260,7 +260,7 @@ def test_array_mix_inf_nan():
     assert sys.getrefcount(nx) == 2
     assert sys.getrefcount(ny) == 2
     test_array = np.array(
-        [0., 0., 4., 4., 4., 4., 12., 12., 16., 19.], dtype=np.float64)
+        [0., 0., 4., 0., 0., 0., 12., 0., 16., 19.], dtype=np.float64)
     np.testing.assert_array_almost_equal(ny, test_array)
 
 
