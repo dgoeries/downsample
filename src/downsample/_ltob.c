@@ -1,7 +1,6 @@
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <Python.h>
 #include <math.h>
-#define PY_SSIZE_T_CLEAN
 #include <numpy/arrayobject.h>
 #include <numpy/npy_math.h>
 
@@ -57,25 +56,27 @@ static PyObject *largest_triangle_one_bucket(PyObject *self, PyObject *args) {
     double *x = (double *)PyArray_DATA(x_array);
     double *y = (double *)PyArray_DATA(y_array);
 
-    npy_intp dims[1] = {threshold};
-    PyArrayObject *x_result = (PyArrayObject *)PyArray_Empty(
-        1, dims, PyArray_DescrFromType(NPY_DOUBLE), 0);
-    PyArrayObject *y_result = (PyArrayObject *)PyArray_Empty(
-        1, dims, PyArray_DescrFromType(NPY_DOUBLE), 0);
-
-    double *x_result_data = (double *)PyArray_DATA((PyArrayObject *)x_result);
-    double *y_result_data = (double *)PyArray_DATA((PyArrayObject *)y_result);
+    double *result_x = (double *)malloc(threshold * sizeof(double));
+    double *result_y = (double *)malloc(threshold * sizeof(double));
+    if (!result_x || !result_y) {
+        PyErr_SetString(PyExc_MemoryError,
+                        "Failed to allocate memory for result arrays.");
+        free(result_x);
+        free(result_y);
+        goto fail;
+    }
 
     // Add the first point and last
-    x_result_data[0] = npy_isfinite(x[0]) ? x[0] : 0.0;
-    y_result_data[0] = npy_isfinite(y[0]) ? y[0] : 0.0;
-    x_result_data[threshold - 1] =
+    result_x[0] = npy_isfinite(x[0]) ? x[0] : 0.0;
+    result_y[0] = npy_isfinite(y[0]) ? y[0] : 0.0;
+    result_x[threshold - 1] =
         npy_isfinite(x[len_points - 1]) ? x[len_points - 1] : 0.0;
-    y_result_data[threshold - 1] =
+    result_y[threshold - 1] =
         npy_isfinite(y[len_points - 1]) ? y[len_points - 1] : 0.0;
 
     double bucket_size = (double)(len_points - 2) / (double)(threshold - 2);
 
+    Py_BEGIN_ALLOW_THREADS;
     // Main loop
     for (npy_intp i = 1; i < threshold - 1; i++) {
         npy_intp start_index = (npy_intp)floor((double)i * bucket_size);
@@ -95,18 +96,24 @@ static PyObject *largest_triangle_one_bucket(PyObject *self, PyObject *args) {
                 max_area_index = j;
             }
         }
-        x_result_data[i] = (double)x[max_area_index];
-        y_result_data[i] = (double)y[max_area_index];
+        result_x[i] = (double)x[max_area_index];
+        result_y[i] = (double)y[max_area_index];
     }
+    Py_END_ALLOW_THREADS;
 
-    // Return x and y arrays as a tuple
-    PyObject *result = PyTuple_Pack(2, x_result, y_result);
-    // Clean up references
+    npy_intp dims[1] = {threshold};
+    PyObject *npx =
+        PyArray_SimpleNewFromData(1, dims, NPY_DOUBLE, (void *)result_x);
+    PyObject *npy =
+        PyArray_SimpleNewFromData(1, dims, NPY_DOUBLE, (void *)result_y);
+    PyArray_ENABLEFLAGS((PyArrayObject *)npx, NPY_ARRAY_OWNDATA);
+    PyArray_ENABLEFLAGS((PyArrayObject *)npy, NPY_ARRAY_OWNDATA);
+
+    PyObject *result = PyTuple_Pack(2, npx, npy);
     Py_DECREF(x_array);
     Py_DECREF(y_array);
-    Py_DECREF(x_result);
-    Py_DECREF(y_result);
-
+    Py_DECREF(npx);
+    Py_DECREF(npy);
     return result;
 
 fail:
