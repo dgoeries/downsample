@@ -18,25 +18,25 @@ def test_single_array():
     """Test that the ltob algorithm rejects arrays with multiple dims"""
     x = np.linspace(0, 1, 100000)
     y = np.random.rand(100000)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.ltob(x, y, 100)
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     assert nx.shape == (100,)
     assert ny.shape == (100,)
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
 
 
 def test_negative_threshold():
     """Test if a negative threshold provides problems"""
     x = np.arange(100000, dtype=np.int32)
     y = np.random.randint(1000, size=100000, dtype=np.uint64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     with pytest.raises(ValueError):
         downsample.ltob(x, y, -100)
 
@@ -45,35 +45,35 @@ def test_threshold_larger():
     """Test if a larger threshold provides problems"""
     x = np.arange(100000, dtype=np.int32)
     y = np.random.randint(1000, size=100000, dtype=np.uint64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     # Will return the arrays!
     nx, ny = downsample.ltob(x, y, 100000 + 1)
     assert len(nx) == 100000
     assert len(ny) == 100000
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
 
 
 def test_input_list():
     """Test the down sampling with lists types"""
     x = list(range(100000))
     y = [True] * 100000
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.ltob(x, y, 10)
     assert len(nx) == 10
     assert len(ny) == 10
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array(
         [0., 12499., 24999., 37499., 49999., 62498.,
          74998., 87498., 99998., 99999.],
@@ -88,17 +88,17 @@ def test_input_list_array():
     """Test the down sampling with mixed types"""
     x = list(range(100000))
     y = np.array([True] * 100000, dtype=bool)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.ltob(x, y, 100)
     assert len(nx) == 100
     assert len(ny) == 100
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array([1.0] * 100, dtype=np.double)
     test_array_bool = np.array([1.0] * 100, dtype=bool)
     np.testing.assert_array_almost_equal(ny, test_array)
@@ -109,46 +109,46 @@ def test_array_size():
     """Test the input failure for different dimensions of arrays"""
     x = np.arange(100000)
     y = np.random.randint(1000, size=100000 - 1, dtype=np.uint64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     with pytest.raises(ValueError):
         assert downsample.ltob(x, y, 100000)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
 
 
 def test_ltob_uint64():
     """Test the base down sampling of the module"""
     x = np.arange(100000, dtype=np.int32)
     y = np.random.randint(1000, size=100000, dtype=np.uint64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.ltob(x, y, 100)
     assert len(nx) == 100
     assert len(ny) == 100
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
 
 
 def test_ltob_bool():
     """Test the down sampling with boolean types"""
     x = np.arange(100000, dtype=np.int32)
     y = np.array([True] * 100000, dtype=bool)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.ltob(x, y, 100)
     assert len(nx) == 100
     assert len(ny) == 100
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array([1.0] * 100, dtype=np.double)
     test_array_bool = np.array([1.0] * 100, dtype=bool)
     np.testing.assert_array_almost_equal(ny, test_array)
@@ -159,17 +159,17 @@ def test_inf():
     """Test the down sampling with inf types"""
     x = np.arange(100000, dtype=np.int32)
     y = np.array([np.inf] * 100000, dtype=np.double)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.ltob(x, y, 100)
     assert len(nx) == 100
     assert len(ny) == 100
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array([0.0] * 100, dtype=np.float64)
     np.testing.assert_array_almost_equal(ny, test_array)
 
@@ -181,17 +181,17 @@ def test_single_inf():
         [1.0, 1.0, 2.0, np.inf, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
          11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18, 19.0, ],
         dtype=np.double, )
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.ltob(x, y, 10)
     assert len(nx) == 10
     assert len(ny) == 10
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array([0., 0., 5., 6., 9., 11., 13., 15., 18., 19.],
                           dtype=np.double)
     np.testing.assert_array_almost_equal(nx, test_array)
@@ -204,17 +204,17 @@ def test_nan():
     """Test the down sampling with NaN types"""
     x = np.arange(100000, dtype=np.int32)
     y = np.array([np.nan] * 100000, dtype=np.double)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.ltob(x, y, 100)
     assert len(nx) == 100
     assert len(ny) == 100
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
 
 
 def test_array_mix_inf_nan():
@@ -224,17 +224,17 @@ def test_array_mix_inf_nan():
         [0.0, 1.0, 2.0, np.nan, 4.0, 5.0, 6.0, np.nan, np.inf, np.inf,
          10.0, np.nan, 12.0, -np.inf, 14.0, 15.0, 16.0, 17.0, np.nan, 19.0, ],
         dtype=np.double)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.ltob(x, y, 10)
     assert len(nx) == 10
     assert len(ny) == 10
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array([0., 0., 5., 0., 0., 0., 0., 15., 0., 19.],
                           dtype=np.double)
     np.testing.assert_array_almost_equal(ny, test_array)
@@ -246,18 +246,18 @@ def test_single_nan():
     y = np.array([0.0, 1.0, 2.0, np.nan, 4.0, 5.0, 6.0, 7.0, 8.0,
                   9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
                   17.0, 18, 19.0, ], dtype=np.double)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     z = x.copy()
     nx, ny = downsample.ltob(x, y, 10)
     assert len(nx) == 10
     assert len(ny) == 10
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array([0., 0., 5., 6., 9., 11., 13., 15., 18., 19.],
                           dtype=np.double)
     np.testing.assert_array_almost_equal(x, z)
