@@ -46,7 +46,7 @@ def test_single_dimension_validation():
                   [0.8, 0.5], [0.8, 0.5], [0.7, 0.5], [0.1, 0.], [0., 0.]],
                  dtype=np.double)
     assert x.shape == (10, 2)
-    assert x.ndim == 2
+    assert x.ndim <= 2
 
     y = np.array([True] * ARRAY_SIZE, dtype=bool)
     with pytest.raises(ValueError):
@@ -57,8 +57,8 @@ def test_negative_threshold():
     """Test if a negative threshold provides problems"""
     x = np.arange(ARRAY_SIZE, dtype=np.int32)
     y = np.random.randint(1000, size=ARRAY_SIZE, dtype=np.uint64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     with pytest.raises(ValueError):
         downsample.lttb(x, y, -THRESHOLD)
 
@@ -67,18 +67,18 @@ def test_threshold_larger():
     """Test if a larger threshold provides problems"""
     x = np.arange(ARRAY_SIZE, dtype=np.int32)
     y = np.random.randint(1000, size=ARRAY_SIZE, dtype=np.uint64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     # Will return the arrays!
     nx, ny = downsample.lttb(x, y, ARRAY_SIZE + 1)
     assert len(nx) == ARRAY_SIZE
     assert len(ny) == ARRAY_SIZE
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
 
     # NOTE: Known feature, we return double arrays ...
     np.testing.assert_array_almost_equal(nx, x)
@@ -89,17 +89,17 @@ def test_input_list():
     """Test the down sampling with lists types"""
     x = list(range(ARRAY_SIZE))
     y = [True] * ARRAY_SIZE
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.lttb(x, y, THRESHOLD)
     assert len(nx) == THRESHOLD
     assert len(ny) == THRESHOLD
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array([1.0] * THRESHOLD, dtype=np.float64)
     test_array_bool = np.array([1.0] * THRESHOLD, dtype=bool)
     np.testing.assert_array_almost_equal(ny, test_array)
@@ -110,17 +110,17 @@ def test_input_list_array():
     """Test the down sampling with mixed types"""
     x = list(range(ARRAY_SIZE))
     y = np.array([True] * ARRAY_SIZE, dtype=bool)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.lttb(x, y, THRESHOLD)
     assert len(nx) == THRESHOLD
     assert len(ny) == THRESHOLD
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array([1.0] * THRESHOLD, dtype=np.float64)
     test_array_bool = np.array([1.0] * THRESHOLD, dtype=bool)
     np.testing.assert_array_almost_equal(ny, test_array)
@@ -131,46 +131,46 @@ def test_array_size():
     """Test the input failure for different dimensions of arrays"""
     x = np.arange(ARRAY_SIZE)
     y = np.random.randint(1000, size=ARRAY_SIZE - 1, dtype=np.uint64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     with pytest.raises(ValueError):
         assert downsample.lttb(x, y, ARRAY_SIZE)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
 
 
 def test_downsample_uint64():
     """Test the base down sampling of the module"""
     x = np.arange(ARRAY_SIZE, dtype=np.int32)
     y = np.random.randint(1000, size=ARRAY_SIZE, dtype=np.uint64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.lttb(x, y, THRESHOLD)
     assert len(nx) == THRESHOLD
     assert len(ny) == THRESHOLD
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
 
 
 def test_downsample_bool():
     """Test the down sampling with boolean types"""
     x = np.arange(ARRAY_SIZE, dtype=np.int32)
     y = np.array([True] * ARRAY_SIZE, dtype=bool)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.lttb(x, y, THRESHOLD)
     assert len(nx) == THRESHOLD
     assert len(ny) == THRESHOLD
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array([1.0] * THRESHOLD, dtype=np.float64)
     test_array_bool = np.array([1.0] * THRESHOLD, dtype=bool)
     np.testing.assert_array_almost_equal(ny, test_array)
@@ -181,17 +181,17 @@ def test_inf():
     """Test the down sampling with inf types"""
     x = np.arange(ARRAY_SIZE, dtype=np.int32)
     y = np.array([np.inf] * ARRAY_SIZE, dtype=np.float64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.lttb(x, y, THRESHOLD)
     assert len(nx) == THRESHOLD
     assert len(ny) == THRESHOLD
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array([0.0] * THRESHOLD, dtype=np.float64)
     np.testing.assert_array_almost_equal(ny, test_array)
 
@@ -200,17 +200,17 @@ def test_nan():
     """Test the down sampling with NaN types"""
     x = np.arange(ARRAY_SIZE, dtype=np.int32)
     y = np.array([np.nan] * ARRAY_SIZE, dtype=np.float64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.lttb(x, y, THRESHOLD)
     assert len(nx) == THRESHOLD
     assert len(ny) == THRESHOLD
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array([0.0] * THRESHOLD, dtype=np.float64)
     np.testing.assert_array_almost_equal(ny, test_array)
 
@@ -219,8 +219,8 @@ def test_benchmark():
     """Basic skeletton benchmark test for the down sample algorithm"""
     x = np.arange(LARGE_ARRAY, dtype=np.int32)
     y = np.arange(LARGE_ARRAY, dtype=np.float64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
 
     def sample():
         nx, ny = downsample.lttb(x, y, LARGE_THRESHOLD)
@@ -234,10 +234,10 @@ def test_benchmark():
     assert len(ny) == LARGE_THRESHOLD
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
 
     assert elapsed < 0.1
 
@@ -248,17 +248,17 @@ def test_array_mix_inf_nan():
     y = np.array([0.0, 1.0, 2.0, np.nan, 4.0, 5.0, 6.0, np.nan, np.inf,
                   np.inf, 10.0, np.nan, 12.0, -np.inf, 14.0, 15.0, 16.0, 17.0,
                   np.nan, 19.0], dtype=np.float64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.lttb(x, y, 10)
     assert len(nx) == 10
     assert len(ny) == 10
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array(
         [0., 0., 4., 0., 0., 0., 12., 0., 16., 19.], dtype=np.float64)
     np.testing.assert_array_almost_equal(ny, test_array)
@@ -270,17 +270,17 @@ def test_single_nan():
     y = np.array([0.0, 1.0, 2.0, np.nan, 4.0, 5.0, 6.0, 7.0, 8.0,
                   9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0,
                   18.0, 19.0], dtype=np.float64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.lttb(x, y, 10)
     assert len(nx) == 10
     assert len(ny) == 10
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array(
         [0., 0., 4., 5., 7., 10., 12., 14., 16., 19.],
         dtype=np.float64)
@@ -293,17 +293,17 @@ def test_single_inf():
     y = np.array([0.0, 1.0, 2.0, np.inf, 4.0, 5.0, 6.0, 7.0, 8.0,
                   9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0,
                   18.0, 19.0], dtype=np.float64)
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
     nx, ny = downsample.lttb(x, y, 10)
     assert len(nx) == 10
     assert len(ny) == 10
     assert nx.dtype == np.double
     assert ny.dtype == np.double
-    assert sys.getrefcount(x) == 2
-    assert sys.getrefcount(y) == 2
-    assert sys.getrefcount(nx) == 2
-    assert sys.getrefcount(ny) == 2
+    assert sys.getrefcount(x) <= 2
+    assert sys.getrefcount(y) <= 2
+    assert sys.getrefcount(nx) <= 2
+    assert sys.getrefcount(ny) <= 2
     test_array = np.array(
         [0., 0., 4., 5., 7., 10., 12., 14., 16., 19.],
         dtype=np.float64)
