@@ -1,12 +1,13 @@
+import gc
 import tracemalloc
 
 import numpy as np
 import pytest
 
-from downsample import ltob, lttb
+from downsample import ltd, lttb
 
 
-@pytest.mark.parametrize("func", [lttb, ltob])
+@pytest.mark.parametrize("func", [lttb, ltd])
 def test_memory_leak(func):
     """
     Test memory leak for different LTTB functions.
@@ -18,8 +19,8 @@ def test_memory_leak(func):
 
     # Test parameters (shared for all functions)
     size = 1_000_000
-    threshold = 100
-    iterations = 1_000
+    threshold = 1000
+    iterations = 1000
 
     # Generate test data
     x = np.linspace(0, 10, size)
@@ -31,7 +32,6 @@ def test_memory_leak(func):
     for _ in range(iterations):
         result = func(x, y, threshold)
         del result
-        import gc
         gc.collect()
 
     # Snapshot after function execution

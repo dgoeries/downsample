@@ -8,10 +8,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "downsample"
-version = "0.0.5"
+version = "0.1.0"
 readme = {file = "README.txt", content-type = "text/markdown"}
 description = "Downsample algorithms module for Python written in C"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [
     { name = "Dennis Göries", email = "dennis@goeries.de" }
 ]
@@ -24,7 +24,7 @@ dependencies = [
 
 license = { text = "MIT" }
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
