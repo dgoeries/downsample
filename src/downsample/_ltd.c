@@ -36,20 +36,20 @@ static PyObject *split_bucket_at(PyObject *buckets_list, int index) {
         return NULL;
     }
 
-    // Get the bucket of interest and index
+    // Get the bucket of interest
     PyArrayObject *bucket =
         (PyArrayObject *)PyList_GetItem(buckets_list, index);
 
     npy_intp bucket_size = PyArray_DIM(bucket, 0);
     npy_intp dim = PyArray_DIM(bucket, 1);
 
-    // calculate split sizes and split the bucket into half
+    // calculate split sizes
     npy_intp bucket_a_length = (npy_intp)ceil((double)bucket_size / 2.0);
     npy_intp bucket_b_length = bucket_size - bucket_a_length;
     npy_intp dims_a[2] = {bucket_a_length, dim};
     npy_intp dims_b[2] = {bucket_b_length, dim};
 
-    // get views for bucket_a and bucket_b in the original data
+    // get views
     double *bucket_a_data = (double *)PyArray_DATA(bucket);
     double *bucket_b_data =
         (double *)PyArray_GETPTR2(bucket, bucket_a_length, 0);
@@ -59,23 +59,27 @@ static PyObject *split_bucket_at(PyObject *buckets_list, int index) {
     PyObject *bucket_b =
         PyArray_SimpleNewFromData(2, dims_b, NPY_DOUBLE, bucket_b_data);
 
-    // resulting bucket size increases by 1
-    PyObject *result_buckets = PyList_New(bucket_count + 1);
+    // Ensure bucket stays alive exactly as long as either bucket_a or
+    // bucket_b exists.
+    Py_INCREF(bucket);
+    PyArray_SetBaseObject((PyArrayObject *)bucket_a, (PyObject *)bucket);
+    Py_INCREF(bucket);
+    PyArray_SetBaseObject((PyArrayObject *)bucket_b, (PyObject *)bucket);
 
+    PyObject *result_buckets = PyList_New(bucket_count + 1);
     for (Py_ssize_t i = 0; i < bucket_count; i++) {
-        // Note: Don't copy bucket at 'index', it is split later.
         if (i == index) {
             continue;
         }
         PyObject *item = PyList_GetItem(buckets_list, i);
         Py_INCREF(item);
-        PyList_SET_ITEM(result_buckets, (i < index) ? i : i + 1, item);
+        PyList_SetItem(result_buckets, (i < index) ? i : i + 1, item);
     }
 
-    // Insert to the new list the split bucket at index and index +1
-    // Note: PyList_SET_ITEM steals the references of bucket_a and bucket_b
-    PyList_SET_ITEM(result_buckets, index, bucket_a);
-    PyList_SET_ITEM(result_buckets, index + 1, bucket_b);
+    // Insert split buckets
+    // PyList_SetItem steals the reference
+    PyList_SetItem(result_buckets, index, bucket_a);
+    PyList_SetItem(result_buckets, index + 1, bucket_b);
 
     return result_buckets;
 }
@@ -92,39 +96,33 @@ static PyObject *merge_bucket_at(PyObject *buckets_list, int index) {
     PyArrayObject *bucket_b =
         (PyArrayObject *)PyList_GetItem(buckets_list, index + 1);
 
-    // set up the new concatenated bucket as a Python list with the two parts to
-    // be merged
     PyObject *arrays_to_merge = PyList_New(2);
     Py_INCREF(bucket_a);
     Py_INCREF(bucket_b);
-    PyList_SET_ITEM(arrays_to_merge, 0, (PyObject *)bucket_a);
-    PyList_SET_ITEM(arrays_to_merge, 1, (PyObject *)bucket_b);
 
-    // merge not bucket_a and bucket_b
+    PyList_SetItem(arrays_to_merge, 0, (PyObject *)bucket_a);
+    PyList_SetItem(arrays_to_merge, 1, (PyObject *)bucket_b);
+
     PyObject *merged_bucket = PyArray_Concatenate(arrays_to_merge, 0);
     Py_DECREF(arrays_to_merge);
 
-    // create a new list with the merged bucket in place of bucket_a and
-    // bucket_b, so the bucket count goes -1
     PyObject *result_buckets = PyList_New(bucket_count - 1);
-    // Copy the other items into result_buckets until the specified index
+
     for (Py_ssize_t i = 0; i < index; i++) {
         PyObject *item = PyList_GetItem(buckets_list, i);
         Py_INCREF(item);
-        PyList_SET_ITEM(result_buckets, i, item);
+        PyList_SetItem(result_buckets, i, item);
     }
-    // place the merged bucket at index
-    PyList_SET_ITEM(result_buckets, index, merged_bucket);
 
-    // And finally copy buckets after index + 1 from buckets_list to
-    // result_buckets, shifting each index by one (due to the removal of one
-    // bucket).
+    PyList_SetItem(result_buckets, index, merged_bucket);
+
     for (Py_ssize_t i = index + 2; i < bucket_count; i++) {
         PyObject *item = PyList_GetItem(buckets_list, i);
         Py_INCREF(item);
-        PyList_SET_ITEM(result_buckets, i - 1, item);
+        PyList_SetItem(result_buckets, i - 1, item);
     }
-    Py_DECREF(buckets_list);
+
+    // No DECREF of buckets_list here (borrowed ref)
     return result_buckets;
 }
 
@@ -185,7 +183,6 @@ static PyObject *LTTB_for_buckets(PyObject *buckets_list) {
     PyObject *result = PyTuple_Pack(2, x_array, y_array);
     Py_DECREF(x_array);
     Py_DECREF(y_array);
-    // This function borrows the list, hence it should not destroy it (DECREF).
 
     return result;
 }
@@ -195,9 +192,6 @@ static double calculate_sse_for_bucket(PyArrayObject *bucket) {
     npy_intp num_points = PyArray_DIM(bucket, 0);
     double *data = (double *)PyArray_DATA(bucket);
 
-    // We calculate the sum of squared errors (SSE) where
-    // first, we need calculate linear regression coefficients for the fit
-    // function (y = a * x + b)
     double sum_x = 0.0, sum_y = 0.0;
     double a_numerator = 0.0;
     double a_denominator = 0.0;
@@ -209,8 +203,6 @@ static double calculate_sse_for_bucket(PyArrayObject *bucket) {
     double avg_x = sum_x / (double)num_points;
     double avg_y = sum_y / (double)num_points;
 
-    // Calculate how the regression line (fitted) predicts the y values
-    // with the x values.
     for (npy_intp i = 0; i < num_points; i++) {
         double deviation_x = data[i * 2] - avg_x;
         double deviation_y = data[i * 2 + 1] - avg_y;
@@ -250,8 +242,6 @@ static npy_intp find_highest_sse_bucket_index(PyObject *buckets_list,
     double max_sse = 0.0;
     npy_intp max_sse_idx = -1;
 
-    // Find the maximum SSE index, excluding the first and last elements,
-    // they are always set to zero
     for (npy_intp i = 1; i < sse_len - 1; i++) {
         PyObject *bucket = PyList_GetItem(buckets_list, i);
         npy_intp bucket_dim = PyArray_DIM((PyArrayObject *)bucket, 0);
@@ -278,7 +268,6 @@ static npy_intp find_lowest_sse_adjacent_buckets_index(PyArrayObject *sse_array,
     double min_sse_sum = INFINITY;
     npy_intp min_sse_index = -1;
 
-    // Find adjacent buckets with the lowest sse, excluding ignoreIndex
     for (npy_intp i = 1; i < sse_len - 2; i++) {
         if (i == ignore_index || i + 1 == ignore_index) {
             continue;
@@ -303,7 +292,7 @@ static PyObject *calculate_sse_for_buckets(PyObject *buckets_list) {
     npy_intp sse_len = num_buckets;
     PyObject *sse_array =
         PyArray_Zeros(1, &sse_len, PyArray_DescrFromType(NPY_DOUBLE), 0);
-    // We have a zeros array, hence start and end are filled already
+
     double *sse_data = (double *)PyArray_DATA((PyArrayObject *)sse_array);
 
     for (Py_ssize_t i = 1; i < num_buckets - 1; i++) {
@@ -316,31 +305,25 @@ static PyObject *calculate_sse_for_buckets(PyObject *buckets_list) {
 
         npy_intp curr_rows = PyArray_DIM(curr_bucket, 0);
         npy_intp cols = PyArray_DIM(curr_bucket, 1);
-        // Combined array has 2 rows more
+
         npy_intp combined_dims[2] = {curr_rows + 2, cols};
         PyArrayObject *bucket_with_adj =
             (PyArrayObject *)PyArray_SimpleNew(2, combined_dims, NPY_DOUBLE);
 
-        // Copy data from the last row of prev_bucket to the first row of
-        // bucket_with_adj
         double *bucket_adj_data = (double *)PyArray_DATA(bucket_with_adj);
         double *prev_last_row = (double *)PyArray_GETPTR2(
             prev_bucket, PyArray_DIM(prev_bucket, 0) - 1, 0);
         memcpy(bucket_adj_data, prev_last_row, cols * __DOUBLE_SIZE__);
 
-        // Copy data from curr_bucket into the middle rows of bucket_with_adj
         double *curr_data = (double *)PyArray_DATA(curr_bucket);
         memcpy(bucket_adj_data + cols, curr_data,
                curr_rows * cols * __DOUBLE_SIZE__);
 
-        // Copy data from the first row of next_bucket to the last row of
-        // bucket_with_adj
         double *next_first_row = (double *)PyArray_GETPTR2(next_bucket, 0, 0);
         memcpy(bucket_adj_data + (curr_rows + 1) * cols, next_first_row,
                cols * __DOUBLE_SIZE__);
 
         sse_data[i] = calculate_sse_for_bucket(bucket_with_adj);
-        // Don't forget to DECREF!
         Py_DECREF(bucket_with_adj);
     }
 
@@ -348,8 +331,6 @@ static PyObject *calculate_sse_for_buckets(PyObject *buckets_list) {
 }
 
 static PyObject *ltd_for_buckets(PyObject *buckets_list) {
-    // We modify the local 'buckets_list' variable (swap it),
-    // so we must own a reference to it initially.
     Py_INCREF(buckets_list);
 
     Py_ssize_t num_buckets = PyList_Size(buckets_list);
@@ -387,6 +368,7 @@ static PyObject *ltd_for_buckets(PyObject *buckets_list) {
             lowest_sse_adjacent_bucket_index += 1;
         }
 
+        // Merge
         PyObject *merged_buckets =
             merge_bucket_at(buckets_list, lowest_sse_adjacent_bucket_index);
 
@@ -398,8 +380,6 @@ static PyObject *ltd_for_buckets(PyObject *buckets_list) {
 
     PyObject *lttb_result = LTTB_for_buckets(buckets_list);
 
-    // Finally, release the final buckets_list (balances the initial INCREF
-    // or creation in loop
     Py_DECREF(buckets_list);
 
     return lttb_result;
@@ -416,24 +396,25 @@ static PyObject *split_into_buckets(PyArrayObject *data, int threshold) {
     npy_intp first_dims[2] = {1, num_cols};
     PyArrayObject *first_point = (PyArrayObject *)PyArray_SimpleNewFromData(
         2, first_dims, NPY_DOUBLE, PyArray_DATA(data));
-    PyList_SET_ITEM(buckets, 0, (PyObject *)first_point);
+
+    PyList_SetItem(buckets, 0, (PyObject *)first_point);
 
     double bucket_size = (double)(num_points - 2) / (threshold - 2);
     for (int i = 0; i < threshold - 2; i++) {
-        npy_intp bucket_start_index =
-            (npy_intp)floor(i * bucket_size) + 1; // Skip the first element
+        npy_intp bucket_start_index = (npy_intp)floor(i * bucket_size) + 1;
         npy_intp bucket_end_index = (npy_intp)floor((i + 1) * bucket_size) + 1;
         npy_intp current_bucket_size = bucket_end_index - bucket_start_index;
 
         npy_intp bucket_dims[2] = {current_bucket_size, num_cols};
-        // PyArray_DATA provides starting pointer for this bucket, we shift
+
         double *bucket_start_ptr =
             (double *)PyArray_DATA(data) + bucket_start_index * num_cols;
-        // Create a new view for the current bucket
+
         PyArrayObject *current_bucket =
             (PyArrayObject *)PyArray_SimpleNewFromData(
                 2, bucket_dims, NPY_DOUBLE, (void *)bucket_start_ptr);
-        PyList_SET_ITEM(buckets, i + 1, (PyObject *)current_bucket);
+
+        PyList_SetItem(buckets, i + 1, (PyObject *)current_bucket);
     }
 
     // And the last point as the last bucket for margins
@@ -442,7 +423,8 @@ static PyObject *split_into_buckets(PyArrayObject *data, int threshold) {
         (double *)PyArray_DATA(data) + (num_points - 1) * num_cols;
     PyArrayObject *last_point = (PyArrayObject *)PyArray_SimpleNewFromData(
         2, last_dims, NPY_DOUBLE, (void *)last_point_ptr);
-    PyList_SET_ITEM(buckets, threshold - 1, (PyObject *)last_point);
+
+    PyList_SetItem(buckets, threshold - 1, (PyObject *)last_point);
 
     return buckets;
 }
@@ -486,21 +468,16 @@ static PyObject *largest_triangle_dynamic(PyObject *self, PyObject *args) {
 
     npy_intp len_points = PyArray_DIM(x, 0);
     if (threshold >= len_points || len_points <= 2) {
-        // If the threshold is greater than the number of points, return x and y
-        // as they are.
-        // Special case if the length of points.
         PyObject *result = PyTuple_Pack(2, x, y);
         Py_DECREF(x);
         Py_DECREF(y);
         return result;
     }
 
-    // Create 2 dim array for combined points
     npy_intp points_dims[2] = {len_points, 2};
     PyArrayObject *points =
         (PyArrayObject *)PyArray_SimpleNew(2, points_dims, NPY_DOUBLE);
 
-    // Fill points array with x and y values
     double *points_data = (double *)PyArray_DATA(points);
     for (npy_intp i = 0; i < len_points; i++) {
         points_data[i * 2] = *(double *)PyArray_GETPTR1(x, i);
@@ -510,7 +487,6 @@ static PyObject *largest_triangle_dynamic(PyObject *self, PyObject *args) {
     PyObject *buckets = split_into_buckets(points, threshold);
     PyObject *result = ltd_for_buckets(buckets);
 
-    // Clean up references
     Py_DECREF(x);
     Py_DECREF(y);
     Py_DECREF(buckets);
