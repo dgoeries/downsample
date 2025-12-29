@@ -188,46 +188,6 @@ static PyObject *LTTB_for_buckets(PyObject *buckets_list) {
 }
 
 
-static double calculate_sse_for_bucket(PyArrayObject *bucket) {
-    npy_intp num_points = PyArray_DIM(bucket, 0);
-    double *data = (double *)PyArray_DATA(bucket);
-
-    double sum_x = 0.0, sum_y = 0.0;
-    double a_numerator = 0.0;
-    double a_denominator = 0.0;
-
-    for (npy_intp i = 0; i < num_points; i++) {
-        sum_x += data[i * 2];
-        sum_y += data[i * 2 + 1];
-    }
-    double avg_x = sum_x / (double)num_points;
-    double avg_y = sum_y / (double)num_points;
-
-    for (npy_intp i = 0; i < num_points; i++) {
-        double deviation_x = data[i * 2] - avg_x;
-        double deviation_y = data[i * 2 + 1] - avg_y;
-        a_numerator += deviation_x * deviation_y;
-        a_denominator += deviation_x * deviation_x;
-    }
-    double a, b;
-    if (a_denominator == 0.0) {
-        a = (a_numerator > 0) ? INFINITY : -INFINITY;
-        b = avg_y;
-    } else {
-        a = a_numerator / a_denominator;
-        b = avg_y - a * avg_x;
-    }
-    double sse = 0.0;
-    for (npy_intp i = 0; i < num_points; i++) {
-        double x = data[i * 2];
-        double y = data[i * 2 + 1];
-        double standardError = y - (a * x + b);
-        sse += standardError * standardError;
-    }
-    return sse;
-}
-
-
 static npy_intp find_highest_sse_bucket_index(PyObject *buckets_list,
                                               PyArrayObject *sse_array) {
     npy_intp sse_len = PyArray_DIM(sse_array, 0);
@@ -282,6 +242,78 @@ static npy_intp find_lowest_sse_adjacent_buckets_index(PyArrayObject *sse_array,
 }
 
 
+static double calculate_sse_bucket(double *prev_point, double *bucket_data,
+                                   npy_intp bucket_len, double *next_point) {
+
+    // Total points = 1 (prev) + bucket_len + 1 (next)
+    npy_intp total_points = bucket_len + 2;
+    double sum_x = 0.0, sum_y = 0.0;
+    npy_intp i;
+
+    sum_x += prev_point[0];
+    sum_y += prev_point[1];
+
+    for (i = 0; i < bucket_len; i++) {
+        sum_x += bucket_data[i * 2];
+        sum_y += bucket_data[i * 2 + 1];
+    }
+
+    sum_x += next_point[0];
+    sum_y += next_point[1];
+    double avg_x = sum_x / total_points;
+    double avg_y = sum_y / total_points;
+
+    // Calculate linear regression
+    double numerator = 0.0;
+    double denominator = 0.0;
+    double deviation_x, deviation_y;
+
+    deviation_x = prev_point[0] - avg_x;
+    deviation_y = prev_point[1] - avg_y;
+    numerator += deviation_x * deviation_y;
+    denominator += deviation_x * deviation_x;
+
+    for (i = 0; i < bucket_len; i++) {
+        deviation_x = bucket_data[i * 2] - avg_x;
+        deviation_y = bucket_data[i * 2 + 1] - avg_y;
+        numerator += deviation_x * deviation_y;
+        denominator += deviation_x * deviation_x;
+    }
+
+    deviation_x = next_point[0] - avg_x;
+    deviation_y = next_point[1] - avg_y;
+    numerator += deviation_x * deviation_y;
+    denominator += deviation_x * deviation_x;
+
+    double a, b;
+    if (denominator == 0.0) {
+        a = (numerator > 0) ? INFINITY : -INFINITY;
+        b = avg_y;
+    } else {
+        a = numerator / denominator;
+        b = avg_y - a * avg_x;
+    }
+
+    // Calculate error
+    double sse = 0.0;
+    double standardError;
+
+    standardError = prev_point[1] - (a * prev_point[0] + b);
+    sse += standardError * standardError;
+
+    for (i = 0; i < bucket_len; i++) {
+        double bx = bucket_data[i * 2];
+        double by = bucket_data[i * 2 + 1];
+        standardError = by - (a * bx + b);
+        sse += standardError * standardError;
+    }
+
+    standardError = next_point[1] - (a * next_point[0] + b);
+    sse += standardError * standardError;
+
+    return sse;
+}
+
 static PyObject *calculate_sse_for_buckets(PyObject *buckets_list) {
     Py_ssize_t num_buckets = PyList_Size(buckets_list);
     if (num_buckets < 3) {
@@ -289,12 +321,12 @@ static PyObject *calculate_sse_for_buckets(PyObject *buckets_list) {
                         "Not enough buckets to calculate SSE");
         return NULL;
     }
+
     npy_intp sse_len = num_buckets;
     PyObject *sse_array =
         PyArray_Zeros(1, &sse_len, PyArray_DescrFromType(NPY_DOUBLE), 0);
 
     double *sse_data = (double *)PyArray_DATA((PyArrayObject *)sse_array);
-
     for (Py_ssize_t i = 1; i < num_buckets - 1; i++) {
         PyArrayObject *prev_bucket =
             (PyArrayObject *)PyList_GetItem(buckets_list, i - 1);
@@ -303,28 +335,16 @@ static PyObject *calculate_sse_for_buckets(PyObject *buckets_list) {
         PyArrayObject *next_bucket =
             (PyArrayObject *)PyList_GetItem(buckets_list, i + 1);
 
-        npy_intp curr_rows = PyArray_DIM(curr_bucket, 0);
-        npy_intp cols = PyArray_DIM(curr_bucket, 1);
-
-        npy_intp combined_dims[2] = {curr_rows + 2, cols};
-        PyArrayObject *bucket_with_adj =
-            (PyArrayObject *)PyArray_SimpleNew(2, combined_dims, NPY_DOUBLE);
-
-        double *bucket_adj_data = (double *)PyArray_DATA(bucket_with_adj);
         double *prev_last_row = (double *)PyArray_GETPTR2(
             prev_bucket, PyArray_DIM(prev_bucket, 0) - 1, 0);
-        memcpy(bucket_adj_data, prev_last_row, cols * __DOUBLE_SIZE__);
 
         double *curr_data = (double *)PyArray_DATA(curr_bucket);
-        memcpy(bucket_adj_data + cols, curr_data,
-               curr_rows * cols * __DOUBLE_SIZE__);
+        npy_intp curr_len = PyArray_DIM(curr_bucket, 0);
 
         double *next_first_row = (double *)PyArray_GETPTR2(next_bucket, 0, 0);
-        memcpy(bucket_adj_data + (curr_rows + 1) * cols, next_first_row,
-               cols * __DOUBLE_SIZE__);
 
-        sse_data[i] = calculate_sse_for_bucket(bucket_with_adj);
-        Py_DECREF(bucket_with_adj);
+        sse_data[i] = calculate_sse_bucket(prev_last_row, curr_data, curr_len,
+                                           next_first_row);
     }
 
     return sse_array;
