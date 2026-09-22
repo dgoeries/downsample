@@ -28,13 +28,9 @@ static void run_ltob(const double *x, const double *y, npy_intp len_points,
     // Main loop for the inner buckets
     for (npy_intp i = 1; i < threshold - 1; i++) {
 
-        npy_intp start_index = (npy_intp)(floor((i - 1) * bucket_size) + 1);
-        npy_intp end_index = (npy_intp)(floor(i * bucket_size) + 1);
-
-        // Clamp the end index safely
-        if (end_index >= len_points) {
-            end_index = len_points - 1;
-        }
+        npy_intp start_index = (npy_intp)floor(i * bucket_size);
+        npy_intp end_index =
+            (npy_intp)fmin(len_points - 1, (i + 1) * bucket_size);
 
         double max_area = -1.0;
         npy_intp max_area_index = start_index;

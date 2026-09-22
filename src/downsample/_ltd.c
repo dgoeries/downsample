@@ -116,7 +116,7 @@ static void run_ltd(const double *points, npy_intp num_points, int threshold,
 
     // Allocate contiguous arrays for buckets and their computed SSE values
     BucketRange *buckets =
-        (BucketRange *)malloc(sizeof(BucketRange) * threshold);
+        (BucketRange *)malloc(sizeof(BucketRange) * (threshold + 1));
     double *sse = (double *)malloc(sizeof(double) * threshold);
 
     // Check for memory allocation failure
@@ -192,28 +192,14 @@ static void run_ltd(const double *points, npy_intp num_points, int threshold,
         if (low_idx < 0)
             break;
 
-        // Step 4. Merge the two lowest SSE adjacent buckets (low_idx and
-        // low_idx + 1) We do this by simply extending the 'end' index of
-        // low_idx, and shifting the rest left.
-        buckets[low_idx].end = buckets[low_idx + 1].end;
-        for (int i = low_idx + 1; i < threshold - 1; i++) {
-            buckets[i] = buckets[i + 1];
-        }
-
-        // Keep track of our high_idx target. If it was to the right of the
-        // merge, it has now shifted one index to the left.
-        if (high_idx > low_idx) {
-            high_idx--;
-        }
-
-        // Step 5. Split the highest SSE bucket perfectly in half
+        // Step 4. Split the highest SSE bucket perfectly in half.
         npy_intp total_len = buckets[high_idx].end - buckets[high_idx].start;
         npy_intp half = (npy_intp)ceil((double)total_len / 2.0);
         npy_intp orig_end = buckets[high_idx].end;
 
         // Shift all buckets to the right to make room for the newly split
         // bucket
-        for (int i = threshold - 1; i > high_idx + 1; i--) {
+        for (int i = threshold; i > high_idx + 1; i--) {
             buckets[i] = buckets[i - 1];
         }
 
@@ -221,6 +207,17 @@ static void run_ltd(const double *points, npy_intp num_points, int threshold,
         buckets[high_idx].end = buckets[high_idx].start + half;
         buckets[high_idx + 1].start = buckets[high_idx].end;
         buckets[high_idx + 1].end = orig_end;
+
+        // Step 5. Merge the pair selected before the split. A split to its
+        // left shifted the pair one position to the right.
+        if (low_idx > high_idx) {
+            low_idx++;
+        }
+
+        buckets[low_idx].end = buckets[low_idx + 1].end;
+        for (int i = low_idx + 1; i < threshold; i++) {
+            buckets[i] = buckets[i + 1];
+        }
     }
 
     // ==========================================
@@ -256,7 +253,10 @@ static void run_ltd(const double *points, npy_intp num_points, int threshold,
         // triangle using the last selected point and the next bucket's average
         // point
         double max_area = -1.0;
-        npy_intp best_idx = buckets[i].start;
+        // The original array-view implementation addressed index -1 when no
+        // area was comparable (for example because it was NaN), which selects
+        // the point immediately before this contiguous bucket.
+        npy_intp best_idx = buckets[i].start - 1;
 
         for (npy_intp j = buckets[i].start; j < buckets[i].end; j++) {
             double px = points[j * 2];
