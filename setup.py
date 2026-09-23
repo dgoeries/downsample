@@ -7,19 +7,19 @@ setup(
     ext_modules=[
         Extension(
             "downsample._ltd",
-            ["src/downsample/_ltd.c", "src/downsample/utils.c"],
+            ["src/downsample/_ltd.c"],
             define_macros=[
                 ("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")],
             include_dirs=[numpy.get_include(), _HEADERS]),
         Extension(
             "downsample._ltob",
-            ["src/downsample/_ltob.c", "src/downsample/utils.c"],
+            ["src/downsample/_ltob.c"],
             define_macros=[
                 ("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")],
             include_dirs=[numpy.get_include(), _HEADERS]),
         Extension(
             "downsample._lttb",
-            ["src/downsample/_lttb.c", "src/downsample/utils.c"],
+            ["src/downsample/_lttb.c"],
             define_macros=[
                 ("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")],
             include_dirs=[numpy.get_include(), _HEADERS])

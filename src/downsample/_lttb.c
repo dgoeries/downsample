@@ -4,8 +4,93 @@
 #include <numpy/arrayobject.h>
 #include <numpy/npy_math.h>
 
-#include "utils.h"
 
+static inline double calc_triangle_area(double ax, double ay, double bx,
+                                        double by, double cx, double cy) {
+    return fabs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) * 0.5);
+}
+
+// ==========================================
+// Core Algorithm
+// ==========================================
+
+static void run_lttb(const double *x, const double *y, npy_intp len_points,
+                     int threshold, double *result_x, double *result_y) {
+
+    // Bucket size calculation. (Total points - 2 margins) / (Buckets - 2
+    // margins)
+    const double every = (double)(len_points - 2) / (threshold - 2);
+
+    // Always add the first point (handling potential NaNs/Infs)
+    result_x[0] = npy_isfinite(x[0]) ? x[0] : 0.0;
+    result_y[0] = npy_isfinite(y[0]) ? y[0] : 0.0;
+
+    npy_intp a = 0; // Index of the selected point from the previous bucket
+    npy_intp next_a = 0;
+
+    for (npy_intp i = 0; i < threshold - 2; ++i) {
+
+        // 1. Calculate the average point (centroid) of the *next* bucket
+        double avg_x = 0.0;
+        double avg_y = 0.0;
+
+        npy_intp avg_start = (npy_intp)(floor((i + 1) * every) + 1);
+        npy_intp avg_end = (npy_intp)(floor((i + 2) * every) + 1);
+
+        if (avg_end >= len_points) {
+            avg_end = len_points;
+        }
+
+        npy_intp avg_length = avg_end - avg_start;
+
+        for (npy_intp j = avg_start; j < avg_end; j++) {
+            avg_x += x[j];
+            avg_y += y[j];
+        }
+
+        // Multiply by inverse instead of dividing (faster on most CPU
+        // architectures)
+        double inv_length = 1.0 / (double)avg_length;
+        avg_x *= inv_length;
+        avg_y *= inv_length;
+
+        // 2. Determine the boundaries of the *current* bucket
+        npy_intp range_start = (npy_intp)(floor((i + 0) * every) + 1);
+        npy_intp range_end = (npy_intp)(floor((i + 1) * every) + 1);
+
+        double max_area = -1.0;
+        double max_area_point_x = 0.0;
+        double max_area_point_y = 0.0;
+
+        // Anchor point (from previous iteration)
+        double ax = x[a];
+        double ay = y[a];
+
+        // 3. Find the point in the current bucket that forms the largest
+        // triangle
+        for (npy_intp k = range_start; k < range_end; k++) {
+            double area = calc_triangle_area(ax, ay, x[k], y[k], avg_x, avg_y);
+            if (area > max_area) {
+                max_area = area;
+                max_area_point_x = x[k];
+                max_area_point_y = y[k];
+                next_a = k; // Save index to use as anchor for the next bucket
+            }
+        }
+
+        // Store the selected point
+        result_x[i + 1] = max_area_point_x;
+        result_y[i + 1] = max_area_point_y;
+
+        // Update anchor index for the next bucket
+        a = next_a;
+    }
+
+    // Always add the last point (handling potential NaNs/Infs)
+    npy_intp last_idx = len_points - 1;
+    result_x[threshold - 1] = npy_isfinite(x[last_idx]) ? x[last_idx] : 0.0;
+    result_y[threshold - 1] = npy_isfinite(y[last_idx]) ? y[last_idx] : 0.0;
+}
 
 static PyObject *largest_triangle_three_buckets(PyObject *self,
                                                 PyObject *args) {
@@ -13,6 +98,7 @@ static PyObject *largest_triangle_three_buckets(PyObject *self,
     PyArrayObject *x_array = NULL, *y_array = NULL;
     int threshold;
 
+    // Parse input arguments
     if (!PyArg_ParseTuple(args, "OOi", &x_obj, &y_obj, &threshold)) {
         return NULL;
     }
@@ -22,12 +108,14 @@ static PyObject *largest_triangle_three_buckets(PyObject *self,
         return NULL;
     }
 
+    // Ensure inputs are arrays or lists
     if ((!PyArray_Check(x_obj) && !PyList_Check(x_obj)) ||
         (!PyArray_Check(y_obj) && !PyList_Check(y_obj))) {
         PyErr_SetString(PyExc_TypeError, "x and y must be list or ndarray.");
         return NULL;
     }
 
+    // Convert inputs to continuous memory C-arrays safely
     x_array = (PyArrayObject *)PyArray_FROM_OTF(x_obj, NPY_DOUBLE,
                                                 NPY_ARRAY_IN_ARRAY);
     y_array = (PyArrayObject *)PyArray_FROM_OTF(y_obj, NPY_DOUBLE,
@@ -38,6 +126,7 @@ static PyObject *largest_triangle_three_buckets(PyObject *self,
         goto fail;
     }
 
+    // Validation
     if (PyArray_NDIM(x_array) != 1 || PyArray_NDIM(y_array) != 1) {
         PyErr_SetString(PyExc_ValueError, "x and y must be 1-dimensional.");
         goto fail;
@@ -48,99 +137,48 @@ static PyObject *largest_triangle_three_buckets(PyObject *self,
     }
 
     npy_intp len_points = PyArray_DIM(x_array, 0);
+
+    // If threshold exceeds the number of points, just return original data
     if (threshold >= len_points || len_points <= 2) {
-        // If the threshold is greater than the number of points, return x and y
-        // as they are. Special case if the length of points.
         PyObject *result = PyTuple_Pack(2, x_array, y_array);
         Py_DECREF(x_array);
         Py_DECREF(y_array);
         return result;
     }
 
-    double *x = (double *)PyArray_DATA(x_array);
-    double *y = (double *)PyArray_DATA(y_array);
+    // Extract raw pointers from the input arrays
+    const double *x = (double *)PyArray_DATA(x_array);
+    const double *y = (double *)PyArray_DATA(y_array);
 
-    double *result_x = (double *)malloc(threshold * sizeof(double));
-    double *result_y = (double *)malloc(threshold * sizeof(double));
-    if (!result_x || !result_y) {
-        PyErr_SetString(PyExc_MemoryError,
-                        "Failed to allocate memory for result arrays.");
-        free(result_x);
-        free(result_y);
+    // Allocate memory for the output array directly through NumPy
+    npy_intp dims[1] = {threshold};
+    PyObject *npx_obj = PyArray_SimpleNew(1, dims, NPY_DOUBLE);
+    PyObject *npy_obj = PyArray_SimpleNew(1, dims, NPY_DOUBLE);
+
+    if (!npx_obj || !npy_obj) {
+        Py_XDECREF(npx_obj);
+        Py_XDECREF(npy_obj);
         goto fail;
     }
 
-    const double every = (double)(len_points - 2) / (threshold - 2);
-    // Always add the first point!
-    result_x[0] = npy_isfinite(x[0]) ? x[0] : 0.0;
-    result_y[0] = npy_isfinite(y[0]) ? y[0] : 0.0;
+    // Extract raw pointers to the output arrays
+    double *result_x = (double *)PyArray_DATA((PyArrayObject *)npx_obj);
+    double *result_y = (double *)PyArray_DATA((PyArrayObject *)npy_obj);
 
-    npy_intp a = 0, next_a = 0;
+    Py_BEGIN_ALLOW_THREADS
 
-    Py_BEGIN_ALLOW_THREADS;
-    for (npy_intp i = 0; i < threshold - 2; ++i) {
-        double avg_x = 0, avg_y = 0;
-        // Careful, thread local variables
-        double max_area_point_x = 0.0;
-        double max_area_point_y = 0.0;
-        npy_intp avg_start = (npy_intp)(floor((i + 1) * every) + 1);
-        npy_intp avg_end = (npy_intp)(floor((i + 2) * every) + 1);
-        if (avg_end >= len_points) {
-            avg_end = len_points;
-        }
-        npy_intp avg_length = avg_end - avg_start;
+        run_lttb(x, y, len_points, threshold, result_x, result_y);
 
-        for (; avg_start < avg_end; avg_start++) {
-            avg_x += x[avg_start];
-            avg_y += y[avg_start];
-        }
-        avg_x /= avg_length;
-        avg_y /= avg_length;
+    Py_END_ALLOW_THREADS
 
-        // Get the range for this bucket
-        npy_intp range_start = (npy_intp)(floor((i + 0) * every) + 1);
-        npy_intp range_end = (npy_intp)(floor((i + 1) * every) + 1);
+        Py_DECREF(x_array);
 
-        // Point a
-        double point_a[2] = {x[a], y[a]};
-        double max_area = -1.0;
-
-        for (npy_intp k = range_start; k < range_end; k++) {
-            double point_k[2] = {x[k], y[k]};
-            double avg_point[2] = {avg_x, avg_y};
-            double area = calculate_triangle_area(point_a, avg_point, point_k);
-            if (area > max_area) {
-                max_area = area;
-                max_area_point_x = x[k];
-                max_area_point_y = y[k];
-                next_a = k;
-            }
-        }
-
-        result_x[i + 1] = max_area_point_x;
-        result_y[i + 1] = max_area_point_y;
-        a = next_a;
-    }
-    Py_END_ALLOW_THREADS;
-
-    result_x[threshold - 1] =
-        npy_isfinite(x[len_points - 1]) ? x[len_points - 1] : 0.0;
-    result_y[threshold - 1] =
-        npy_isfinite(y[len_points - 1]) ? y[len_points - 1] : 0.0;
-
-    npy_intp dims[1] = {threshold};
-    PyObject *npx =
-        PyArray_SimpleNewFromData(1, dims, NPY_DOUBLE, (void *)result_x);
-    PyObject *npy =
-        PyArray_SimpleNewFromData(1, dims, NPY_DOUBLE, (void *)result_y);
-    PyArray_ENABLEFLAGS((PyArrayObject *)npx, NPY_ARRAY_OWNDATA);
-    PyArray_ENABLEFLAGS((PyArrayObject *)npy, NPY_ARRAY_OWNDATA);
-
-    PyObject *result = PyTuple_Pack(2, npx, npy);
-    Py_DECREF(x_array);
     Py_DECREF(y_array);
-    Py_DECREF(npx);
-    Py_DECREF(npy);
+
+    // Pack the results and return them
+    PyObject *result = PyTuple_Pack(2, npx_obj, npy_obj);
+    Py_DECREF(npx_obj);
+    Py_DECREF(npy_obj);
     return result;
 
 fail:
@@ -148,6 +186,10 @@ fail:
     Py_XDECREF(y_array);
     return NULL;
 }
+
+// ==========================================
+// Module Definition and Initialization
+// ==========================================
 
 static PyMethodDef LTTBMethods[] = {
     {"largest_triangle_three_buckets", largest_triangle_three_buckets,
@@ -161,6 +203,7 @@ static struct PyModuleDef LTTBModule = {
     "A Python module that computes the largest triangle three buckets "
     "algorithm (LTTB) using C code.",
     -1, LTTBMethods};
+
 
 PyMODINIT_FUNC PyInit__lttb(void) {
     import_array();

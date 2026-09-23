@@ -72,6 +72,6 @@ For a performance overview, a sample of 7.500 data points was analyzed with a
 threshold set at 500 points. The performance test was conducted on a single core,
 utilizing a base clock speed of 3.70 GHz and 32 MB of L3 cache.
 
-- LTD: 977.2 us
-- LTOB: 61.0 us
-- LTTB: 63.1 us
+- LTD: 252.3 us
+- LTOB: 51.6 us
+- LTTB: 60.6 us
