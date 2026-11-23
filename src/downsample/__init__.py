@@ -11,10 +11,10 @@ def ltd(x: np.ndarray, y: np.ndarray, threshold: int):
 
 
 def ltob(x: np.ndarray, y: np.ndarray, threshold: int):
-    """Apply the largest triangle one buckets algorithm"""
+    """Apply the largest triangle one bucket algorithm"""
     return largest_triangle_one_bucket(x, y, threshold)
 
 
 def lttb(x: np.ndarray, y: np.ndarray, threshold: int):
-    """Apply the largest triangle one buckets algorithm"""
+    """Apply the largest triangle three buckets algorithm"""
     return largest_triangle_three_buckets(x, y, threshold)

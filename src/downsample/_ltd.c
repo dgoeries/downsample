@@ -10,13 +10,15 @@
 
 
 typedef struct {
-    npy_intp start; // inclusive index in the points array
-    npy_intp end;   // exclusive index in the points array
+    npy_intp start; // inclusive index in the input arrays
+    npy_intp end;   // exclusive index in the input arrays
 
     // Memoized SSE of this bucket together with the exact inputs it was
-    // computed from. The SSE only depends on the bucket range and on its two
-    // anchor points, so it is reused as long as none of those changed. The
-    // cache travels with the bucket when buckets are shifted.
+    // computed from. The SSE only depends on the bucket range [start, end)
+    // and on its two anchor points (prev and next), so it is reused across
+    // dynamic optimization iterations as long as none of those four indices
+    // changed. Because the cache is embedded in BucketRange, it automatically
+    // travels with the bucket when buckets are shifted via memmove().
     npy_intp key_prev;  // index of the previous anchor point
     npy_intp key_start; // bucket start at computation time (-1: invalid)
     npy_intp key_end;   // bucket end at computation time
@@ -25,21 +27,30 @@ typedef struct {
 } BucketRange;
 
 
+/*
+ * Computes the area of the triangle formed by points A, B, and C using the
+ * shoelace formula: 0.5 * |Ax(By - Cy) + Bx(Cy - Ay) + Cx(Ay - By)|.
+ */
 static inline double calc_triangle_area(double ax, double ay, double bx,
                                         double by, double cx, double cy) {
     return fabs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) * 0.5);
 }
 
-/* The core algorithm only handles aligned, C-contiguous float64 vectors. */
+/*
+ * Debug predicate verifying that a PyArrayObject is a 1-D, aligned,
+ * C-contiguous array of double-precision floats (NPY_DOUBLE).
+ */
 static inline int is_contiguous_double_1d(PyArrayObject *arr) {
     return PyArray_NDIM(arr) == 1 && PyArray_TYPE(arr) == NPY_DOUBLE &&
            PyArray_IS_C_CONTIGUOUS(arr) && PyArray_ISALIGNED(arr);
 }
 
 /*
- * Calculates the Sum of Squared Errors (SSE) for a given bucket by fitting a
- * linear regression line. It includes the previously selected point (prev)
- * and the next anchor point (next) to ensure continuity.
+ * Calculates the Sum of Squared Errors (SSE) for a given bucket [start, end)
+ * by fitting an Ordinary Least Squares (OLS) linear regression line y = a*x + b.
+ * It includes the last point of the previous bucket (prev_x, prev_y) and the
+ * first point of the next bucket (next_x, next_y) so that adjacent buckets
+ * share boundary anchors for continuity.
  */
 static inline double calculate_sse_bucket(const double *x, const double *y,
                                           npy_intp start, npy_intp end,
@@ -50,10 +61,10 @@ static inline double calculate_sse_bucket(const double *x, const double *y,
     const npy_intp bucket_len = end - start;
     const npy_intp total_points = bucket_len + 2; // Bucket + prev + next
 
+    // Pass 1: Accumulate sums for X and Y to find the mean (centroid)
     double sum_x = prev_x + next_x;
     double sum_y = prev_y + next_y;
 
-    // Accumulate sums for X and Y to find the mean (centroid)
     for (npy_intp i = start; i < end; i++) {
         sum_x += x[i];
         sum_y += y[i];
@@ -62,16 +73,17 @@ static inline double calculate_sse_bucket(const double *x, const double *y,
     const double avg_x = sum_x / (double)total_points;
     const double avg_y = sum_y / (double)total_points;
 
+    // Pass 2: Accumulate covariance (numerator) and variance of X (denominator)
     double numerator = 0.0;
     double denominator = 0.0;
 
-    // Calculate variance/covariance for the previous point
+    // Contribution from the previous anchor point
     double dx = prev_x - avg_x;
     double dy = prev_y - avg_y;
     numerator += dx * dy;
     denominator += dx * dx;
 
-    // Calculate variance/covariance for all points in the bucket
+    // Contributions from all points inside the bucket
     for (npy_intp i = start; i < end; i++) {
         dx = x[i] - avg_x;
         dy = y[i] - avg_y;
@@ -79,16 +91,16 @@ static inline double calculate_sse_bucket(const double *x, const double *y,
         denominator += dx * dx;
     }
 
-    // Calculate variance/covariance for the next point
+    // Contribution from the next anchor point
     dx = next_x - avg_x;
     dy = next_y - avg_y;
     numerator += dx * dy;
     denominator += dx * dx;
 
-    // Calculate linear regression coefficients: y = ax + b
+    // Calculate linear regression coefficients: y = a * x + b
     double a, b;
     if (denominator == 0.0) {
-        // Handle vertical line edge-case
+        // Handle vertical line edge-case (zero variance in X)
         a = (numerator > 0) ? INFINITY : -INFINITY;
         b = avg_y;
     } else {
@@ -96,19 +108,22 @@ static inline double calculate_sse_bucket(const double *x, const double *y,
         b = avg_y - a * avg_x; // y-intercept
     }
 
-    // Sum of Squared Errors (SSE) of the vertical residuals against the
-    // regression line, including both anchor points.
+    // Pass 3: Sum of Squared Errors (SSE) of the vertical residuals against
+    // the fitted regression line, including both anchor points.
     double sse = 0.0;
 
+    // Residual of previous anchor point
     double err = prev_y - (a * prev_x + b);
     sse += err * err;
 
+    // Residuals of all points in the bucket
     for (npy_intp i = start; i < end; i++) {
         // err = (Actual Y) - (Predicted Y on the trendline)
         err = y[i] - (a * x[i] + b);
         sse += err * err;
     }
 
+    // Residual of next anchor point
     err = next_y - (a * next_x + b);
     sse += err * err;
 
@@ -120,10 +135,20 @@ static inline double calculate_sse_bucket(const double *x, const double *y,
 // ==========================================
 
 /*
- * Requires `x` and `y` to be C-contiguous float64 arrays of `num_points`
- * elements, `out_x` / `out_y` to hold `threshold` elements and `buckets` to
- * provide room for `threshold + 1` entries (one scratch slot used while
- * splitting). The function cannot fail.
+ * Executes the Largest Triangle Dynamic (LTD) downsampling algorithm:
+ *   1. Partitions the interior points into (threshold - 2) equal-sized buckets.
+ *   2. Iteratively refines bucket boundaries by splitting the bucket with the
+ *      highest linear regression SSE and merging the adjacent pair with the
+ *      lowest combined SSE.
+ *   3. Applies LTTB point selection across the dynamically sized buckets.
+ *
+ * Preconditions:
+ *   - `x` and `y` are C-contiguous float64 arrays of `num_points` elements.
+ *   - `out_x` and `out_y` are C-contiguous float64 arrays of `threshold`
+ *     elements.
+ *   - `buckets` has capacity for `threshold + 1` entries (the extra slot at
+ *     index `threshold` is used as scratch space when splitting a bucket
+ *     before merging).
  */
 static void run_ltd(const double *x, const double *y, npy_intp num_points,
                     int threshold, BucketRange *buckets, double *out_x,
@@ -133,16 +158,17 @@ static void run_ltd(const double *x, const double *y, npy_intp num_points,
     assert(threshold > 2);
     assert(num_points > threshold);
 
+    // Mark all SSE cache entries as invalid before the first iteration
     for (int i = 0; i <= threshold; i++) {
-        buckets[i].key_start = -1; // no cached SSE yet
+        buckets[i].key_start = -1;
     }
 
     // The first and last buckets are explicitly fixed to the first and last
-    // points
+    // data points
     buckets[0].start = 0;
     buckets[0].end = 1;
 
-    // Distribute the remaining points evenly across the middle buckets
+    // Distribute the remaining interior points evenly across the middle buckets
     const double bucket_size = (double)(num_points - 2) / (threshold - 2);
     for (int i = 0; i < threshold - 2; i++) {
         buckets[i + 1].start = (npy_intp)floor(i * bucket_size) + 1;
@@ -153,24 +179,28 @@ static void run_ltd(const double *x, const double *y, npy_intp num_points,
     buckets[threshold - 1].end = num_points;
 
     // Dynamic optimization iterations to adjust bucket boundaries
+    // (Empirically derived in Steinarsson's paper: threshold * 10 / threshold)
     const int num_iterations = 10;
 
     for (int iter = 0; iter < num_iterations; iter++) {
-        // Step 1. Calculate SSE for all middle buckets. A split / merge only
-        // touches a handful of buckets, so after the first iteration nearly
-        // all values are served from the per-bucket cache instead of
-        // re-scanning every point (identical results, O(n / threshold) work
-        // per iteration instead of O(n)).
+        // Step 1. Update SSE for all middle buckets.
+        // Because a split and a merge only alter a small neighborhood of
+        // buckets (the split halves, the merged bucket, and any adjacent
+        // bucket whose anchor point changed), almost all buckets in iterations
+        // 2..10 hit the per-bucket cache in O(1) instead of rescanning all N
+        // points.
         for (int i = 1; i < threshold - 1; i++) {
             BucketRange *bk = &buckets[i];
-            // Anchor points are the last point of previous bucket and first
-            // of next bucket
+            // Anchor points are the last point of the previous bucket and the
+            // first point of the next bucket
             const npy_intp prev_idx = buckets[i - 1].end - 1;
             const npy_intp next_idx = buckets[i + 1].start;
             assert(prev_idx >= 0 && prev_idx < num_points);
             assert(next_idx >= 0 && next_idx < num_points);
             assert(bk->end <= num_points);
 
+            // Recompute SSE only if the bucket boundaries or anchor indices
+            // changed since this bucket's SSE was last evaluated
             if (bk->key_start != bk->start || bk->key_end != bk->end ||
                 bk->key_prev != prev_idx || bk->key_next != next_idx) {
                 bk->sse = calculate_sse_bucket(x, y, bk->start, bk->end,
@@ -183,8 +213,8 @@ static void run_ltd(const double *x, const double *y, npy_intp num_points,
             }
         }
 
-        // Step 2. Find the bucket with the highest SSE (must have >1 point to
-        // split)
+        // Step 2. Find the middle bucket with the highest SSE (must contain > 1
+        // point so that it can be split into two non-empty halves)
         double max_sse = 0.0;
         int high_idx = -1;
         for (int i = 1; i < threshold - 1; i++) {
@@ -195,12 +225,12 @@ static void run_ltd(const double *x, const double *y, npy_intp num_points,
             }
         }
 
-        // If we can't find a bucket to split, optimization is complete
+        // If no splittable bucket with positive finite SSE exists, stop early
         if (high_idx < 0)
             break;
 
-        // Step 3. Find the pair of adjacent buckets with the lowest combined
-        // SSE (We exclude the bucket we just marked for splitting)
+        // Step 3. Find the pair of adjacent middle buckets (i, i + 1) with the
+        // lowest combined SSE, excluding any pair involving high_idx
         double min_sum = INFINITY;
         int low_idx = -1;
         for (int i = 1; i < threshold - 2; i++) {
@@ -214,37 +244,42 @@ static void run_ltd(const double *x, const double *y, npy_intp num_points,
             }
         }
 
-        // If we can't find buckets to merge, optimization is complete
+        // If no valid pair can be merged (e.g. threshold <= 4 or all sums are
+        // NaN/Inf), stop early
         if (low_idx < 0)
             break;
 
         assert(high_idx >= 1 && high_idx <= threshold - 2);
         assert(low_idx >= 1 && low_idx <= threshold - 3);
 
-        // Step 4. Split the highest SSE bucket perfectly in half.
+        // Step 4. Split the highest-SSE bucket in half.
         const npy_intp total_len =
             buckets[high_idx].end - buckets[high_idx].start;
         const npy_intp half = (npy_intp)ceil((double)total_len / 2.0);
         const npy_intp orig_end = buckets[high_idx].end;
 
         // Shift buckets [high_idx + 1, threshold) one slot to the right to
-        // make room for the newly split bucket (uses the scratch slot).
+        // make room for the second half (temporarily using slot `threshold`).
         memmove(&buckets[high_idx + 2], &buckets[high_idx + 1],
                 sizeof(BucketRange) * (size_t)(threshold - high_idx - 1));
 
-        // Assign boundaries for the two newly split halves. The cache keys
-        // no longer match, so both halves are recomputed.
+        // Update boundaries for the two newly split halves. Their start/end
+        // no longer match key_start/key_end, so both will be recomputed on the
+        // next iteration.
         buckets[high_idx].end = buckets[high_idx].start + half;
         buckets[high_idx + 1].start = buckets[high_idx].end;
         buckets[high_idx + 1].end = orig_end;
         buckets[high_idx + 1].key_start = -1;
 
-        // Step 5. Merge the pair selected before the split. A split to its
-        // left shifted the pair one position to the right.
+        // Step 5. Merge the lowest-SSE pair selected before the split.
+        // If the pair was to the right of high_idx, the split shifted its
+        // index by +1.
         if (low_idx > high_idx) {
             low_idx++;
         }
 
+        // Extend the first bucket of the pair to cover the second, then shift
+        // the trailing buckets one slot left to restore `threshold` buckets.
         buckets[low_idx].end = buckets[low_idx + 1].end;
         memmove(&buckets[low_idx + 1], &buckets[low_idx + 2],
                 sizeof(BucketRange) * (size_t)(threshold - low_idx - 1));
@@ -253,8 +288,8 @@ static void run_ltd(const double *x, const double *y, npy_intp num_points,
     // ==========================================
     // LTTB Point Selection Phase
     // ==========================================
-    // Now that buckets are optimally sized, select the best point from each
-    // bucket.
+    // Now that the buckets are dynamically sized, select one representative
+    // point from each bucket using the Largest Triangle Three Buckets rule.
 
     // Always select the exact first point
     out_x[0] = x[0];
@@ -263,7 +298,8 @@ static void run_ltd(const double *x, const double *y, npy_intp num_points,
     double last_y = out_y[0];
 
     // Iterate over the middle buckets to pick the point that forms the largest
-    // triangle
+    // triangle with the previously selected point and the next bucket's
+    // centroid
     for (int i = 1; i < threshold - 1; i++) {
 
         // 1. Calculate the average point (centroid) of the *next* bucket
@@ -271,6 +307,7 @@ static void run_ltd(const double *x, const double *y, npy_intp num_points,
         const npy_intp next_end = buckets[i + 1].end;
         const npy_intp next_count = next_end - next_start;
         assert(next_start >= 0 && next_end <= num_points);
+        assert(next_count > 0);
 
         double avg_next_x = 0.0, avg_next_y = 0.0;
         for (npy_intp k = next_start; k < next_end; k++) {
@@ -326,14 +363,20 @@ static PyObject *largest_triangle_dynamic(PyObject *self, PyObject *args) {
         return NULL; // Return NULL propagates the Python exception
     }
 
-    // Validation
+    // Validate threshold and input container types
     if (threshold <= 2) {
         PyErr_SetString(PyExc_ValueError, "Threshold must be larger than 2.");
         return NULL;
     }
 
+    if ((!PyArray_Check(x_obj) && !PyList_Check(x_obj)) ||
+        (!PyArray_Check(y_obj) && !PyList_Check(y_obj))) {
+        PyErr_SetString(PyExc_TypeError, "x and y must be list or ndarray.");
+        return NULL;
+    }
+
     // Convert input objects to aligned, C-contiguous float64 arrays. This is
-    // a no-op (no copy) for input that already has that layout.
+    // a no-op (zero copy) when an input array already has that layout.
     x = (PyArrayObject *)PyArray_FROM_OTF(x_obj, NPY_DOUBLE,
                                           NPY_ARRAY_IN_ARRAY);
     y = x ? (PyArrayObject *)PyArray_FROM_OTF(y_obj, NPY_DOUBLE,
@@ -354,9 +397,9 @@ static PyObject *largest_triangle_dynamic(PyObject *self, PyObject *args) {
 
     const npy_intp len_points = PyArray_DIM(x, 0);
 
-    // If the data is already smaller than the threshold, just return the data
-    // untouched
-    if (threshold >= len_points) {
+    // If the data is already smaller than or equal to the threshold, return
+    // the converted 1D float64 arrays untouched
+    if (threshold >= len_points || len_points <= 2) {
         result = PyTuple_Pack(2, x, y);
         goto done;
     }
@@ -368,9 +411,8 @@ static PyObject *largest_triangle_dynamic(PyObject *self, PyObject *args) {
     if (!out_x_arr || !out_y_arr)
         goto done;
 
-    // Bucket work space (+1 scratch slot for splitting). Allocated while
-    // holding the GIL so a failure raises a proper MemoryError instead of
-    // silently returning garbage.
+    // Allocate bucket workspace (+1 scratch slot for splitting) while holding
+    // the GIL so that an allocation failure raises a Python MemoryError.
     buckets = (BucketRange *)PyMem_Malloc(sizeof(BucketRange) *
                                           ((size_t)threshold + 1));
     if (!buckets) {
@@ -378,7 +420,7 @@ static PyObject *largest_triangle_dynamic(PyObject *self, PyObject *args) {
         goto done;
     }
 
-    // The core only deals with contiguous memory
+    // Verify contiguity and alignment invariants before entering the C core
     assert(is_contiguous_double_1d(x));
     assert(is_contiguous_double_1d(y));
     assert(is_contiguous_double_1d((PyArrayObject *)out_x_arr));
@@ -389,6 +431,7 @@ static PyObject *largest_triangle_dynamic(PyObject *self, PyObject *args) {
     double *out_x = (double *)PyArray_DATA((PyArrayObject *)out_x_arr);
     double *out_y = (double *)PyArray_DATA((PyArrayObject *)out_y_arr);
 
+    // Release the GIL during the pure-C computation
     Py_BEGIN_ALLOW_THREADS;
     run_ltd(x_raw, y_raw, len_points, threshold, buckets, out_x, out_y);
     Py_END_ALLOW_THREADS;

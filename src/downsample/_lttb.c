@@ -7,12 +7,19 @@
 #include <numpy/npy_math.h>
 
 
+/*
+ * Computes the area of the triangle formed by points A, B, and C using the
+ * shoelace formula: 0.5 * |Ax(By - Cy) + Bx(Cy - Ay) + Cx(Ay - By)|.
+ */
 static inline double calc_triangle_area(double ax, double ay, double bx,
                                         double by, double cx, double cy) {
     return fabs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) * 0.5);
 }
 
-/* The core algorithm only handles aligned, C-contiguous float64 vectors. */
+/*
+ * Debug predicate verifying that a PyArrayObject is a 1-D, aligned,
+ * C-contiguous array of double-precision floats (NPY_DOUBLE).
+ */
 static inline int is_contiguous_double_1d(PyArrayObject *arr) {
     return PyArray_NDIM(arr) == 1 && PyArray_TYPE(arr) == NPY_DOUBLE &&
            PyArray_IS_C_CONTIGUOUS(arr) && PyArray_ISALIGNED(arr);
@@ -23,8 +30,18 @@ static inline int is_contiguous_double_1d(PyArrayObject *arr) {
 // ==========================================
 
 /*
- * Requires `x` and `y` to be C-contiguous float64 arrays of `len_points`
- * elements and `result_x` / `result_y` to hold `threshold` elements.
+ * Executes the Largest Triangle Three Buckets (LTTB) downsampling algorithm:
+ *   1. Keeps the first and last data points (clamping non-finite values to 0).
+ *   2. Partitions the interior points into (threshold - 2) equal-sized buckets.
+ *   3. For each bucket, computes the centroid (average X, Y) of the *next*
+ *      bucket and selects the point in the *current* bucket that maximizes
+ *      the triangle area formed with the previously selected point and that
+ *      centroid.
+ *
+ * Preconditions:
+ *   - `x` and `y` are C-contiguous float64 arrays of `len_points` elements.
+ *   - `result_x` and `result_y` are C-contiguous float64 arrays of `threshold`
+ *     elements.
  */
 static void run_lttb(const double *x, const double *y, npy_intp len_points,
                      int threshold, double *result_x, double *result_y) {
@@ -33,19 +50,20 @@ static void run_lttb(const double *x, const double *y, npy_intp len_points,
     assert(threshold > 2);
     assert(len_points > threshold);
 
-    // Bucket size calculation. (Total points - 2 margins) / (Buckets - 2
-    // margins)
+    // Bucket size calculation: (Total points - 2 endpoints) / (Buckets - 2
+    // endpoints)
     const double every = (double)(len_points - 2) / (threshold - 2);
 
-    // Always add the first point (handling potential NaNs/Infs)
+    // Always add the first point (replacing NaN/Inf with 0.0)
     result_x[0] = npy_isfinite(x[0]) ? x[0] : 0.0;
     result_y[0] = npy_isfinite(y[0]) ? y[0] : 0.0;
 
     npy_intp a = 0; // Index of the selected point from the previous bucket
 
-    // Boundaries of the *current* bucket. The end of the current bucket is
-    // identical to the start of the next (averaging) bucket, so each
-    // boundary is computed only once and carried over to the next iteration.
+    // Boundaries [range_start, range_end) of the *current* bucket.
+    // Because the end of bucket `i` is identical to the start of bucket
+    // `i + 1` (the averaging bucket), each boundary is computed once and
+    // carried forward to the next iteration, cutting floor() calls in half.
     npy_intp range_start = (npy_intp)(floor((npy_intp)0 * every) + 1);
     npy_intp range_end = (npy_intp)(floor((npy_intp)1 * every) + 1);
 
@@ -73,8 +91,9 @@ static void run_lttb(const double *x, const double *y, npy_intp len_points,
         avg_x *= inv_length;
         avg_y *= inv_length;
 
-        // 2. Find the point in the current bucket that forms the largest
-        // triangle with the previous anchor and the next bucket's centroid.
+        // 2. Find the point in the current bucket [range_start, range_end)
+        // that forms the largest triangle with the previous anchor `a` and
+        // the next bucket's centroid (avg_x, avg_y).
         assert(range_start >= 1 && range_end <= len_points);
         const double ax = x[a];
         const double ay = y[a];
@@ -90,9 +109,11 @@ static void run_lttb(const double *x, const double *y, npy_intp len_points,
             }
         }
 
-        // 3. Store the selected point. If no area was comparable (NaN), the
-        // point is reported as 0.0 and the anchor stays unchanged.
+        // 3. Store the selected point. If no area was comparable (e.g. NaN),
+        // the point is reported as (0.0, 0.0) and the anchor `a` stays
+        // unchanged.
         if (best >= 0) {
+            assert(best < len_points);
             result_x[i + 1] = x[best];
             result_y[i + 1] = y[best];
             a = best;
@@ -101,12 +122,12 @@ static void run_lttb(const double *x, const double *y, npy_intp len_points,
             result_y[i + 1] = 0.0;
         }
 
-        // Advance to the next bucket
+        // Advance bucket boundaries to the next bucket
         range_start = avg_start;
         range_end = next_range_end;
     }
 
-    // Always add the last point (handling potential NaNs/Infs)
+    // Always add the last point (replacing NaN/Inf with 0.0)
     const npy_intp last_idx = len_points - 1;
     result_x[threshold - 1] = npy_isfinite(x[last_idx]) ? x[last_idx] : 0.0;
     result_y[threshold - 1] = npy_isfinite(y[last_idx]) ? y[last_idx] : 0.0;
@@ -120,17 +141,17 @@ static PyObject *largest_triangle_three_buckets(PyObject *self,
     PyObject *result = NULL;
     int threshold;
 
-    // Parse input arguments
+    // Parse input arguments: (Object, Object, Integer)
     if (!PyArg_ParseTuple(args, "OOi", &x_obj, &y_obj, &threshold)) {
         return NULL;
     }
 
+    // Validate threshold and input container types
     if (threshold <= 2) {
         PyErr_SetString(PyExc_ValueError, "Threshold must be larger than 2.");
         return NULL;
     }
 
-    // Ensure inputs are arrays or lists
     if ((!PyArray_Check(x_obj) && !PyList_Check(x_obj)) ||
         (!PyArray_Check(y_obj) && !PyList_Check(y_obj))) {
         PyErr_SetString(PyExc_TypeError, "x and y must be list or ndarray.");
@@ -138,7 +159,7 @@ static PyObject *largest_triangle_three_buckets(PyObject *self,
     }
 
     // Convert inputs to aligned, C-contiguous float64 arrays. This is a
-    // no-op (no copy) for input that already has that layout.
+    // no-op (zero copy) when an input array already has that layout.
     x_array = (PyArrayObject *)PyArray_FROM_OTF(x_obj, NPY_DOUBLE,
                                                 NPY_ARRAY_IN_ARRAY);
     y_array = x_array ? (PyArrayObject *)PyArray_FROM_OTF(
@@ -150,7 +171,7 @@ static PyObject *largest_triangle_three_buckets(PyObject *self,
         goto done;
     }
 
-    // Validation
+    // Validate array dimensions and matching shapes
     if (PyArray_NDIM(x_array) != 1 || PyArray_NDIM(y_array) != 1) {
         PyErr_SetString(PyExc_ValueError, "x and y must be 1-dimensional.");
         goto done;
@@ -162,7 +183,8 @@ static PyObject *largest_triangle_three_buckets(PyObject *self,
 
     const npy_intp len_points = PyArray_DIM(x_array, 0);
 
-    // If threshold exceeds the number of points, just return original data
+    // If threshold exceeds the number of points, return the converted 1D
+    // float64 arrays untouched
     if (threshold >= len_points || len_points <= 2) {
         result = PyTuple_Pack(2, x_array, y_array);
         goto done;
@@ -176,7 +198,7 @@ static PyObject *largest_triangle_three_buckets(PyObject *self,
         goto done;
     }
 
-    // The core only deals with contiguous memory
+    // Verify contiguity and alignment invariants before entering the C core
     assert(is_contiguous_double_1d(x_array));
     assert(is_contiguous_double_1d(y_array));
     assert(is_contiguous_double_1d((PyArrayObject *)npx_obj));
@@ -187,6 +209,7 @@ static PyObject *largest_triangle_three_buckets(PyObject *self,
     double *result_x = (double *)PyArray_DATA((PyArrayObject *)npx_obj);
     double *result_y = (double *)PyArray_DATA((PyArrayObject *)npy_obj);
 
+    // Release the GIL during the pure-C computation
     Py_BEGIN_ALLOW_THREADS;
     run_lttb(x, y, len_points, threshold, result_x, result_y);
     Py_END_ALLOW_THREADS;
