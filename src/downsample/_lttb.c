@@ -1,93 +1,134 @@
+#define PY_SSIZE_T_CLEAN
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <Python.h>
+#include <assert.h>
 #include <math.h>
 #include <numpy/arrayobject.h>
 #include <numpy/npy_math.h>
 
 
+/*
+ * Computes the area of the triangle formed by points A, B, and C using the
+ * shoelace formula: 0.5 * |Ax(By - Cy) + Bx(Cy - Ay) + Cx(Ay - By)|.
+ */
 static inline double calc_triangle_area(double ax, double ay, double bx,
                                         double by, double cx, double cy) {
     return fabs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) * 0.5);
+}
+
+/*
+ * Debug predicate verifying that a PyArrayObject is a 1-D, aligned,
+ * C-contiguous array of double-precision floats (NPY_DOUBLE).
+ */
+static inline int is_contiguous_double_1d(PyArrayObject *arr) {
+    return PyArray_NDIM(arr) == 1 && PyArray_TYPE(arr) == NPY_DOUBLE &&
+           PyArray_IS_C_CONTIGUOUS(arr) && PyArray_ISALIGNED(arr);
 }
 
 // ==========================================
 // Core Algorithm
 // ==========================================
 
+/*
+ * Executes the Largest Triangle Three Buckets (LTTB) downsampling algorithm:
+ *   1. Keeps the first and last data points (clamping non-finite values to 0).
+ *   2. Partitions the interior points into (threshold - 2) equal-sized buckets.
+ *   3. For each bucket, computes the centroid (average X, Y) of the *next*
+ *      bucket and selects the point in the *current* bucket that maximizes
+ *      the triangle area formed with the previously selected point and that
+ *      centroid.
+ *
+ * Preconditions:
+ *   - `x` and `y` are C-contiguous float64 arrays of `len_points` elements.
+ *   - `result_x` and `result_y` are C-contiguous float64 arrays of `threshold`
+ *     elements.
+ */
 static void run_lttb(const double *x, const double *y, npy_intp len_points,
                      int threshold, double *result_x, double *result_y) {
+    assert(x != NULL && y != NULL);
+    assert(result_x != NULL && result_y != NULL);
+    assert(threshold > 2);
+    assert(len_points > threshold);
 
-    // Bucket size calculation. (Total points - 2 margins) / (Buckets - 2
-    // margins)
+    // Bucket size calculation: (Total points - 2 endpoints) / (Buckets - 2
+    // endpoints)
     const double every = (double)(len_points - 2) / (threshold - 2);
 
-    // Always add the first point (handling potential NaNs/Infs)
+    // Always add the first point (replacing NaN/Inf with 0.0)
     result_x[0] = npy_isfinite(x[0]) ? x[0] : 0.0;
     result_y[0] = npy_isfinite(y[0]) ? y[0] : 0.0;
 
     npy_intp a = 0; // Index of the selected point from the previous bucket
-    npy_intp next_a = 0;
+
+    // Boundaries [range_start, range_end) of the *current* bucket.
+    // Because the end of bucket `i` is identical to the start of bucket
+    // `i + 1` (the averaging bucket), each boundary is computed once and
+    // carried forward to the next iteration, cutting floor() calls in half.
+    npy_intp range_start = (npy_intp)(floor((npy_intp)0 * every) + 1);
+    npy_intp range_end = (npy_intp)(floor((npy_intp)1 * every) + 1);
 
     for (npy_intp i = 0; i < threshold - 2; ++i) {
 
         // 1. Calculate the average point (centroid) of the *next* bucket
-        double avg_x = 0.0;
-        double avg_y = 0.0;
-
-        npy_intp avg_start = (npy_intp)(floor((i + 1) * every) + 1);
-        npy_intp avg_end = (npy_intp)(floor((i + 2) * every) + 1);
+        const npy_intp avg_start = range_end;
+        const npy_intp next_range_end =
+            (npy_intp)(floor((i + 2) * every) + 1);
+        npy_intp avg_end = next_range_end;
 
         if (avg_end >= len_points) {
             avg_end = len_points;
         }
 
-        npy_intp avg_length = avg_end - avg_start;
-
+        double avg_x = 0.0;
+        double avg_y = 0.0;
         for (npy_intp j = avg_start; j < avg_end; j++) {
             avg_x += x[j];
             avg_y += y[j];
         }
 
-        // Multiply by inverse instead of dividing (faster on most CPU
-        // architectures)
-        double inv_length = 1.0 / (double)avg_length;
+        // Multiply by inverse instead of dividing
+        const double inv_length = 1.0 / (double)(avg_end - avg_start);
         avg_x *= inv_length;
         avg_y *= inv_length;
 
-        // 2. Determine the boundaries of the *current* bucket
-        npy_intp range_start = (npy_intp)(floor((i + 0) * every) + 1);
-        npy_intp range_end = (npy_intp)(floor((i + 1) * every) + 1);
+        // 2. Find the point in the current bucket [range_start, range_end)
+        // that forms the largest triangle with the previous anchor `a` and
+        // the next bucket's centroid (avg_x, avg_y).
+        assert(range_start >= 1 && range_end <= len_points);
+        const double ax = x[a];
+        const double ay = y[a];
 
         double max_area = -1.0;
-        double max_area_point_x = 0.0;
-        double max_area_point_y = 0.0;
+        npy_intp best = -1;
 
-        // Anchor point (from previous iteration)
-        double ax = x[a];
-        double ay = y[a];
-
-        // 3. Find the point in the current bucket that forms the largest
-        // triangle
         for (npy_intp k = range_start; k < range_end; k++) {
             double area = calc_triangle_area(ax, ay, x[k], y[k], avg_x, avg_y);
             if (area > max_area) {
                 max_area = area;
-                max_area_point_x = x[k];
-                max_area_point_y = y[k];
-                next_a = k; // Save index to use as anchor for the next bucket
+                best = k;
             }
         }
 
-        // Store the selected point
-        result_x[i + 1] = max_area_point_x;
-        result_y[i + 1] = max_area_point_y;
+        // 3. Store the selected point. If no area was comparable (e.g. NaN),
+        // the point is reported as (0.0, 0.0) and the anchor `a` stays
+        // unchanged.
+        if (best >= 0) {
+            assert(best < len_points);
+            result_x[i + 1] = x[best];
+            result_y[i + 1] = y[best];
+            a = best;
+        } else {
+            result_x[i + 1] = 0.0;
+            result_y[i + 1] = 0.0;
+        }
 
-        // Update anchor index for the next bucket
-        a = next_a;
+        // Advance bucket boundaries to the next bucket
+        range_start = avg_start;
+        range_end = next_range_end;
     }
 
-    // Always add the last point (handling potential NaNs/Infs)
-    npy_intp last_idx = len_points - 1;
+    // Always add the last point (replacing NaN/Inf with 0.0)
+    const npy_intp last_idx = len_points - 1;
     result_x[threshold - 1] = npy_isfinite(x[last_idx]) ? x[last_idx] : 0.0;
     result_y[threshold - 1] = npy_isfinite(y[last_idx]) ? y[last_idx] : 0.0;
 }
@@ -96,95 +137,92 @@ static PyObject *largest_triangle_three_buckets(PyObject *self,
                                                 PyObject *args) {
     PyObject *x_obj, *y_obj;
     PyArrayObject *x_array = NULL, *y_array = NULL;
+    PyObject *npx_obj = NULL, *npy_obj = NULL;
+    PyObject *result = NULL;
     int threshold;
 
-    // Parse input arguments
+    // Parse input arguments: (Object, Object, Integer)
     if (!PyArg_ParseTuple(args, "OOi", &x_obj, &y_obj, &threshold)) {
         return NULL;
     }
 
+    // Validate threshold and input container types
     if (threshold <= 2) {
         PyErr_SetString(PyExc_ValueError, "Threshold must be larger than 2.");
         return NULL;
     }
 
-    // Ensure inputs are arrays or lists
     if ((!PyArray_Check(x_obj) && !PyList_Check(x_obj)) ||
         (!PyArray_Check(y_obj) && !PyList_Check(y_obj))) {
         PyErr_SetString(PyExc_TypeError, "x and y must be list or ndarray.");
         return NULL;
     }
 
-    // Convert inputs to continuous memory C-arrays safely
+    // Convert inputs to aligned, C-contiguous float64 arrays. This is a
+    // no-op (zero copy) when an input array already has that layout.
     x_array = (PyArrayObject *)PyArray_FROM_OTF(x_obj, NPY_DOUBLE,
                                                 NPY_ARRAY_IN_ARRAY);
-    y_array = (PyArrayObject *)PyArray_FROM_OTF(y_obj, NPY_DOUBLE,
-                                                NPY_ARRAY_IN_ARRAY);
+    y_array = x_array ? (PyArrayObject *)PyArray_FROM_OTF(
+                            y_obj, NPY_DOUBLE, NPY_ARRAY_IN_ARRAY)
+                      : NULL;
     if (!x_array || !y_array) {
         PyErr_SetString(PyExc_ValueError,
                         "Failed to convert inputs to NumPy arrays.");
-        goto fail;
+        goto done;
     }
 
-    // Validation
+    // Validate array dimensions and matching shapes
     if (PyArray_NDIM(x_array) != 1 || PyArray_NDIM(y_array) != 1) {
         PyErr_SetString(PyExc_ValueError, "x and y must be 1-dimensional.");
-        goto fail;
+        goto done;
     }
     if (!PyArray_SAMESHAPE(x_array, y_array)) {
         PyErr_SetString(PyExc_ValueError, "x and y must have the same shape.");
-        goto fail;
+        goto done;
     }
 
-    npy_intp len_points = PyArray_DIM(x_array, 0);
+    const npy_intp len_points = PyArray_DIM(x_array, 0);
 
-    // If threshold exceeds the number of points, just return original data
+    // If threshold exceeds the number of points, return the converted 1D
+    // float64 arrays untouched
     if (threshold >= len_points || len_points <= 2) {
-        PyObject *result = PyTuple_Pack(2, x_array, y_array);
-        Py_DECREF(x_array);
-        Py_DECREF(y_array);
-        return result;
+        result = PyTuple_Pack(2, x_array, y_array);
+        goto done;
     }
 
-    // Extract raw pointers from the input arrays
-    const double *x = (double *)PyArray_DATA(x_array);
-    const double *y = (double *)PyArray_DATA(y_array);
-
-    // Allocate memory for the output array directly through NumPy
+    // Allocate the (uninitialized, fully overwritten) output arrays
     npy_intp dims[1] = {threshold};
-    PyObject *npx_obj = PyArray_SimpleNew(1, dims, NPY_DOUBLE);
-    PyObject *npy_obj = PyArray_SimpleNew(1, dims, NPY_DOUBLE);
-
+    npx_obj = PyArray_SimpleNew(1, dims, NPY_DOUBLE);
+    npy_obj = PyArray_SimpleNew(1, dims, NPY_DOUBLE);
     if (!npx_obj || !npy_obj) {
-        Py_XDECREF(npx_obj);
-        Py_XDECREF(npy_obj);
-        goto fail;
+        goto done;
     }
 
-    // Extract raw pointers to the output arrays
+    // Verify contiguity and alignment invariants before entering the C core
+    assert(is_contiguous_double_1d(x_array));
+    assert(is_contiguous_double_1d(y_array));
+    assert(is_contiguous_double_1d((PyArrayObject *)npx_obj));
+    assert(is_contiguous_double_1d((PyArrayObject *)npy_obj));
+
+    const double *x = (const double *)PyArray_DATA(x_array);
+    const double *y = (const double *)PyArray_DATA(y_array);
     double *result_x = (double *)PyArray_DATA((PyArrayObject *)npx_obj);
     double *result_y = (double *)PyArray_DATA((PyArrayObject *)npy_obj);
 
-    Py_BEGIN_ALLOW_THREADS
-
-        run_lttb(x, y, len_points, threshold, result_x, result_y);
-
-    Py_END_ALLOW_THREADS
-
-        Py_DECREF(x_array);
-
-    Py_DECREF(y_array);
+    // Release the GIL during the pure-C computation
+    Py_BEGIN_ALLOW_THREADS;
+    run_lttb(x, y, len_points, threshold, result_x, result_y);
+    Py_END_ALLOW_THREADS;
 
     // Pack the results and return them
-    PyObject *result = PyTuple_Pack(2, npx_obj, npy_obj);
-    Py_DECREF(npx_obj);
-    Py_DECREF(npy_obj);
-    return result;
+    result = PyTuple_Pack(2, npx_obj, npy_obj);
 
-fail:
+done:
     Py_XDECREF(x_array);
     Py_XDECREF(y_array);
-    return NULL;
+    Py_XDECREF(npx_obj);
+    Py_XDECREF(npy_obj);
+    return result;
 }
 
 // ==========================================

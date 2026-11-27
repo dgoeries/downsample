@@ -4,10 +4,10 @@ import tracemalloc
 import numpy as np
 import pytest
 
-from downsample import ltd, lttb
+from downsample import ltd, ltob, lttb
 
 
-@pytest.mark.parametrize("func", [lttb, ltd])
+@pytest.mark.parametrize("func", [lttb, ltob, ltd])
 def test_memory_leak(func):
     """
     Test memory leak for different LTTB functions.

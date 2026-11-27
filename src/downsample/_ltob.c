@@ -1,21 +1,53 @@
+#define PY_SSIZE_T_CLEAN
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <Python.h>
+#include <assert.h>
 #include <math.h>
 #include <numpy/arrayobject.h>
 
+
+/*
+ * Computes the area of the triangle formed by points A, B, and C using the
+ * shoelace formula: 0.5 * |Ax(By - Cy) + Bx(Cy - Ay) + Cx(Ay - By)|.
+ */
 static inline double calc_triangle_area(double ax, double ay, double bx,
                                         double by, double cx, double cy) {
     return fabs((ax * (by - cy) + bx * (cy - ay) + cx * (ay - by)) * 0.5);
+}
+
+/*
+ * Debug predicate verifying that a PyArrayObject is a 1-D, aligned,
+ * C-contiguous array of double-precision floats (NPY_DOUBLE).
+ */
+static inline int is_contiguous_double_1d(PyArrayObject *arr) {
+    return PyArray_NDIM(arr) == 1 && PyArray_TYPE(arr) == NPY_DOUBLE &&
+           PyArray_IS_C_CONTIGUOUS(arr) && PyArray_ISALIGNED(arr);
 }
 
 // ==========================================
 // Core LTOB
 // ==========================================
 
+/*
+ * Executes the Largest Triangle One Bucket (LTOB) downsampling algorithm:
+ *   1. Keeps the first and last data points (clamping non-finite values to 0).
+ *   2. Partitions the interior points into (threshold - 2) equal-sized buckets.
+ *   3. In each bucket, selects the point j that forms the largest triangle
+ *      with its immediate neighbors (j - 1) and (j + 1).
+ *
+ * Preconditions:
+ *   - `x` and `y` are C-contiguous float64 arrays of `len_points` elements.
+ *   - `result_x` and `result_y` are C-contiguous float64 arrays of `threshold`
+ *     elements.
+ */
 static void run_ltob(const double *x, const double *y, npy_intp len_points,
                      int threshold, double *result_x, double *result_y) {
+    assert(x != NULL && y != NULL);
+    assert(result_x != NULL && result_y != NULL);
+    assert(threshold > 2);
+    assert(len_points > threshold);
 
-    // Always add the first point (handling NaNs/Infs using standard C math)
+    // Always add the first point (replacing NaN/Inf with 0.0)
     result_x[0] = isfinite(x[0]) ? x[0] : 0.0;
     result_y[0] = isfinite(y[0]) ? y[0] : 0.0;
 
@@ -28,47 +60,63 @@ static void run_ltob(const double *x, const double *y, npy_intp len_points,
     // Main loop for the inner buckets
     for (npy_intp i = 1; i < threshold - 1; i++) {
 
-        npy_intp start_index = (npy_intp)floor(i * bucket_size);
-        npy_intp end_index =
-            (npy_intp)fmin(len_points - 1, (i + 1) * bucket_size);
+        const npy_intp start_index = (npy_intp)floor(i * bucket_size);
+        const npy_intp end_index =
+            (npy_intp)fmin((double)(len_points - 1), (i + 1) * bucket_size);
 
         double max_area = -1.0;
         npy_intp max_area_index = start_index;
 
-        // Find the point in this bucket that forms the largest triangle
-        // with its immediate neighbors (j-1 and j+1)
+        // Because len_points > threshold, bucket_size > 1.0, which guarantees
+        // start_index >= 1 for all i >= 1. Combined with end_index <=
+        // len_points - 1, both neighbors (j - 1) and (j + 1) are strictly
+        // within [0, len_points - 1] for every j in [start_index, end_index).
+        assert(start_index >= 1 && start_index < len_points);
+        assert(end_index <= len_points - 1);
+
+        // Slide a three-point register window (prev, cur, next) across the
+        // bucket so only one new point (j + 1) is loaded from memory per step.
+        double px = x[start_index - 1];
+        double py = y[start_index - 1];
+        double cx = x[start_index];
+        double cy = y[start_index];
+
         for (npy_intp j = start_index; j < end_index; j++) {
+            const double nx = x[j + 1];
+            const double ny = y[j + 1];
 
-            // Boundary safety: ensure j-1 and j+1 don't read out of bounds
-            npy_intp prev_idx = (j - 1 >= 0) ? j - 1 : 0;
-            npy_intp next_idx = (j + 1 < len_points) ? j + 1 : len_points - 1;
-
-            double area = calc_triangle_area(x[prev_idx], y[prev_idx], x[j],
-                                             y[j], x[next_idx], y[next_idx]);
-
-            // Ensure we don't let Inf/NaN areas overtake the bucket logic
+            double area = calc_triangle_area(px, py, cx, cy, nx, ny);
+            // NaN comparisons evaluate to false, preventing NaN areas from
+            // overtaking the bucket selection
             if (area > max_area) {
                 max_area = area;
                 max_area_index = j;
             }
+            px = cx;
+            py = cy;
+            cx = nx;
+            cy = ny;
         }
 
         // Save the best point for this bucket.
-        // If the area was unresolvable or the point itself is not finite,
-        // fallback to 0.0 to satisfy test_inf(), test_nan(), and
-        // test_single_inf() expectations.
-        if (max_area == -1.0 || !isfinite(x[max_area_index]) ||
-            !isfinite(y[max_area_index])) {
-            result_x[i] = 0.0;
-            result_y[i] = 0.0;
-        } else {
-            result_x[i] = x[max_area_index];
-            result_y[i] = y[max_area_index];
+        // If every triangle area was NaN (max_area == -1.0) or the winning
+        // point itself is non-finite (e.g. a neighbor of an Inf point produced
+        // an Inf area), fall back to (0.0, 0.0).
+        result_x[i] = 0.0;
+        result_y[i] = 0.0;
+        if (max_area != -1.0) {
+            assert(max_area_index >= 0 && max_area_index < len_points);
+            const double bx = x[max_area_index];
+            const double by = y[max_area_index];
+            if (isfinite(bx) && isfinite(by)) {
+                result_x[i] = bx;
+                result_y[i] = by;
+            }
         }
     }
 
-    // Always add the last point (handling potential NaNs/Infs)
-    npy_intp last_idx = len_points - 1;
+    // Always add the last point (replacing NaN/Inf with 0.0)
+    const npy_intp last_idx = len_points - 1;
     result_x[threshold - 1] = isfinite(x[last_idx]) ? x[last_idx] : 0.0;
     result_y[threshold - 1] = isfinite(y[last_idx]) ? y[last_idx] : 0.0;
 }
@@ -76,13 +124,16 @@ static void run_ltob(const double *x, const double *y, npy_intp len_points,
 static PyObject *largest_triangle_one_bucket(PyObject *self, PyObject *args) {
     PyObject *x_obj, *y_obj;
     PyArrayObject *x_array = NULL, *y_array = NULL;
+    PyObject *npx_obj = NULL, *npy_obj = NULL;
+    PyObject *result = NULL;
     int threshold;
 
-    // Parse input arguments
+    // Parse input arguments: (Object, Object, Integer)
     if (!PyArg_ParseTuple(args, "OOi", &x_obj, &y_obj, &threshold)) {
         return NULL;
     }
 
+    // Validate threshold and input container types
     if (threshold <= 2) {
         PyErr_SetString(PyExc_ValueError, "Threshold must be larger than 2.");
         return NULL;
@@ -94,80 +145,68 @@ static PyObject *largest_triangle_one_bucket(PyObject *self, PyObject *args) {
         return NULL;
     }
 
-    // Safely convert inputs
+    // Convert inputs to aligned, C-contiguous float64 arrays. This is a
+    // no-op (zero copy) when an input array already has that layout.
     x_array = (PyArrayObject *)PyArray_FROM_OTF(x_obj, NPY_DOUBLE,
                                                 NPY_ARRAY_IN_ARRAY);
-    y_array = (PyArrayObject *)PyArray_FROM_OTF(y_obj, NPY_DOUBLE,
-                                                NPY_ARRAY_IN_ARRAY);
+    y_array = x_array ? (PyArrayObject *)PyArray_FROM_OTF(
+                            y_obj, NPY_DOUBLE, NPY_ARRAY_IN_ARRAY)
+                      : NULL;
     if (!x_array || !y_array)
-        goto fail;
+        goto done;
 
-    // Validation
+    // Validate array dimensions and matching shapes
     if (PyArray_NDIM(x_array) != 1 || PyArray_NDIM(y_array) != 1) {
         PyErr_SetString(PyExc_ValueError, "x and y must be 1-dimensional.");
-        goto fail;
+        goto done;
     }
     if (!PyArray_SAMESHAPE(x_array, y_array)) {
         PyErr_SetString(PyExc_ValueError, "x and y must have the same shape.");
-        goto fail;
+        goto done;
     }
 
-    npy_intp len_points = PyArray_DIM(x_array, 0);
+    const npy_intp len_points = PyArray_DIM(x_array, 0);
 
-    // If threshold is greater than or equal to data size, return arrays
-    // unchanged
+    // If threshold is greater than or equal to data size, return the converted
+    // 1D float64 arrays unchanged
     if (threshold >= len_points || len_points <= 2) {
-        PyObject *result = PyTuple_Pack(2, x_array, y_array);
-        Py_DECREF(x_array);
-        Py_DECREF(y_array);
-        return result;
+        result = PyTuple_Pack(2, x_array, y_array);
+        goto done;
     }
 
-    // Extract raw pointers to the input data
-    const double *x = (double *)PyArray_DATA(x_array);
-    const double *y = (double *)PyArray_DATA(y_array);
-
-    // Allocate memory for the output arrays using NumPy's safe allocator
+    // Allocate the (uninitialized, fully overwritten) output arrays
     npy_intp dims[1] = {threshold};
-    PyObject *npx_obj = PyArray_SimpleNew(1, dims, NPY_DOUBLE);
-    PyObject *npy_obj = PyArray_SimpleNew(1, dims, NPY_DOUBLE);
-
+    npx_obj = PyArray_SimpleNew(1, dims, NPY_DOUBLE);
+    npy_obj = PyArray_SimpleNew(1, dims, NPY_DOUBLE);
     if (!npx_obj || !npy_obj) {
-        Py_XDECREF(npx_obj);
-        Py_XDECREF(npy_obj);
-        goto fail;
+        goto done;
     }
 
-    // Extract raw pointers to the output arrays
+    // Verify contiguity and alignment invariants before entering the C core
+    assert(is_contiguous_double_1d(x_array));
+    assert(is_contiguous_double_1d(y_array));
+    assert(is_contiguous_double_1d((PyArrayObject *)npx_obj));
+    assert(is_contiguous_double_1d((PyArrayObject *)npy_obj));
+
+    const double *x = (const double *)PyArray_DATA(x_array);
+    const double *y = (const double *)PyArray_DATA(y_array);
     double *result_x = (double *)PyArray_DATA((PyArrayObject *)npx_obj);
     double *result_y = (double *)PyArray_DATA((PyArrayObject *)npy_obj);
 
-    // ==========================================
-    // Release the GIL and do the heavy lifting
-    // ==========================================
-    Py_BEGIN_ALLOW_THREADS
+    // Release the GIL during the pure-C computation
+    Py_BEGIN_ALLOW_THREADS;
+    run_ltob(x, y, len_points, threshold, result_x, result_y);
+    Py_END_ALLOW_THREADS;
 
-        run_ltob(x, y, len_points, threshold, result_x, result_y);
+    // Pack the newly filled arrays into a tuple
+    result = PyTuple_Pack(2, npx_obj, npy_obj);
 
-    Py_END_ALLOW_THREADS
-        // ==========================================
-
-        // Pack the newly filled arrays into a tuple
-        PyObject *result = PyTuple_Pack(2, npx_obj, npy_obj);
-
-    // Clean up our local references
-    Py_DECREF(x_array);
-    Py_DECREF(y_array);
-    Py_DECREF(npx_obj);
-    Py_DECREF(npy_obj);
-
-    return result;
-
-fail:
-    // Jump target for memory cleanup on failure
+done:
     Py_XDECREF(x_array);
     Py_XDECREF(y_array);
-    return NULL;
+    Py_XDECREF(npx_obj);
+    Py_XDECREF(npy_obj);
+    return result;
 }
 
 // ==========================================

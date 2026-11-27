@@ -7,11 +7,33 @@ import downsample
 
 
 def test_input_wrong_threshold():
-    """Test the down sampling with wrong input types for x or/and y"""
+    """Test the down sampling with wrong input types for threshold"""
     x = np.linspace(0.0, 10.0, 100000)
     y = np.linspace(0.0, 10.0, 100000)
     with pytest.raises(TypeError):
         downsample.ltob(x, y, "str")
+
+
+def test_input_wrong_x_y():
+    """Test the down sampling with wrong input types for x or/and y"""
+    y = np.array([True] * 1000, dtype=bool)
+    with pytest.raises(TypeError):
+        downsample.ltob(1, y, 100)
+    with pytest.raises(TypeError):
+        downsample.ltob(y, 4, 100)
+    with pytest.raises(TypeError):
+        downsample.ltob("wrong", y, 100)
+    with pytest.raises(TypeError):
+        downsample.ltob(y, "wrong", 100)
+
+
+def test_single_dimension_validation():
+    """Test that the ltob algorithm rejects arrays with multiple dims"""
+    x = np.zeros((10, 2), dtype=np.double)
+    y = np.ones(1000, dtype=bool)
+    with pytest.raises(ValueError):
+        downsample.ltob(x, y, 100)
+
 
 
 def test_single_array():
